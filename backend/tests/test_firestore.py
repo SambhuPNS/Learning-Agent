@@ -1,0 +1,134 @@
+import asyncio
+import os
+import uuid
+from concurrent.futures import ThreadPoolExecutor
+
+import pytest
+from google.auth.credentials import AnonymousCredentials
+from google.cloud import firestore
+
+from app import student_model, topics, tutor
+from app.store import ConcurrentUpdateError, FirestoreStore
+from scripts.migrate_store_to_firestore import load_documents
+
+
+@pytest.fixture
+def firestore_store():
+    host = os.environ.get("FIRESTORE_EMULATOR_HOST")
+    if not host:
+        pytest.skip("Start a local Firestore emulator to run transaction integration tests.")
+    if host.rsplit(":", 1)[0] not in {"127.0.0.1", "localhost", "[::1]"}:
+        pytest.fail("Firestore integration tests only allow a loopback emulator.")
+    client = firestore.Client(project=f"demo-learning-{uuid.uuid4().hex[:12]}", credentials=AnonymousCredentials())
+    yield FirestoreStore(client)
+    client.close()
+
+
+def user(user_id="learner"):
+    return {"id": user_id, "name": "Learner", "email": f"{user_id}@example.com", "role": "student",
+            "profile": {"grade": 7, "fractionsComfort": "some", "learningStyle": "visual"}, "progress": {}}
+
+
+def test_firestore_registration_is_atomic(firestore_store):
+    def register(index):
+        learner = {**user(str(index)), "email": "same@example.com"}
+        return firestore_store.create_user(learner, f"token-{index}")
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(register, range(4)))
+    assert sum(results) == 1
+    assert len(firestore_store.all_users()) == 1
+    assert len(list(firestore_store.db.collection("tokens").stream())) == 1
+
+
+def test_firestore_concurrent_turns_commit_only_one_snapshot(firestore_store):
+    learner = user()
+    firestore_store.create_user(learner, "token")
+    _, model, _, version = firestore_store.get_learning_state(learner["id"], "learner:lesson", student_model._new_model)
+    def commit(index):
+        session = tutor._new_session(f"lesson-{index}", "topic")
+        event = {"id": f"event-{index}", "userId": learner["id"], "ts": f"2026-01-0{index + 1}"}
+        try:
+            firestore_store.commit_learning_turn(learner["id"], f"learner:lesson-{index}", version,
+                                                  {**model, "winner": index}, session, {"mastery": index}, [event])
+            return index
+        except ConcurrentUpdateError:
+            return None
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(commit, range(2)))
+    winners = [result for result in results if result is not None]
+    assert len(winners) == 1
+    winner = winners[0]
+    assert firestore_store.get_user(learner["id"])["progress"] == {f"lesson-{winner}": {"mastery": winner}}
+    assert firestore_store.get_model(learner["id"], student_model._new_model)["winner"] == winner
+    assert firestore_store.get_session(f"learner:lesson-{winner}") is not None
+    assert firestore_store.get_session(f"learner:lesson-{1 - winner}") is None
+    assert [event["id"] for event in firestore_store.recent_events(learner["id"], 10)] == [f"event-{winner}"]
+    other = 1 - winner
+    _, next_model, _, next_version = firestore_store.get_learning_state(
+        learner["id"], f"learner:lesson-{other}", student_model._new_model,
+    )
+    firestore_store.commit_learning_turn(learner["id"], f"learner:lesson-{other}", next_version, next_model,
+                                          tutor._new_session(f"lesson-{other}", "topic"), {"mastery": 80}, [])
+    assert firestore_store.get_user(learner["id"])["progress"] == {
+        f"lesson-{winner}": {"mastery": winner}, f"lesson-{other}": {"mastery": 80},
+    }
+
+
+def test_firestore_invalid_write_cannot_partially_commit(firestore_store):
+    learner = user()
+    firestore_store.create_user(learner, "token")
+    _, model, _, version = firestore_store.get_learning_state(learner["id"], "learner:lesson", student_model._new_model)
+    with pytest.raises(TypeError):
+        firestore_store.commit_learning_turn(learner["id"], "learner:lesson", version,
+                                              {**model, "invalid": object()}, tutor._new_session("lesson", "topic"), {}, [])
+    assert firestore_store.get_user(learner["id"])["progress"] == {}
+    assert firestore_store.get_session("learner:lesson") is None
+    assert not list(firestore_store.db.collection("studentModels").stream())
+
+
+def test_firestore_profile_changes_preserve_progress_and_invalidate_turn(firestore_store):
+    learner = user()
+    learner["progress"] = {"previous": {"mastery": 80}}
+    firestore_store.create_user(learner, "token")
+    _, model, _, version = firestore_store.get_learning_state(learner["id"], "learner:lesson", student_model._new_model)
+    firestore_store.save_profile(learner["id"], {"grade": 9})
+    with pytest.raises(ConcurrentUpdateError):
+        firestore_store.commit_learning_turn(learner["id"], "learner:lesson", version, model,
+                                              tutor._new_session("lesson", "topic"), {}, [])
+    persisted = firestore_store.get_user(learner["id"])
+    assert persisted["profile"] == {"grade": 9}
+    assert persisted["progress"] == {"previous": {"mastery": 80}}
+
+
+def test_firestore_tutor_returns_current_mastery(firestore_store, monkeypatch):
+    learner = user()
+    firestore_store.create_user(learner, "token")
+    monkeypatch.setattr(tutor, "store", firestore_store)
+    monkeypatch.setattr(topics, "store", firestore_store)
+    monkeypatch.setattr(student_model, "store", firestore_store)
+    def turn(action, text=None):
+        return asyncio.run(tutor.take_turn(learner, "comparing-fractions", action, text))
+    turn("start")
+    turn("continue")
+    turn("continue")
+    response = turn("answer", "1/4")
+    persisted = firestore_store.get_model(learner["id"], student_model._new_model)
+    mastery = round(persisted["concepts"]["comparing-fractions"]["mastery"] * 100)
+    assert response["state"]["mastery"] == response["learner"]["mastery"] == mastery
+    assert firestore_store.get_user(learner["id"])["progress"]["comparing-fractions"]["mastery"] == mastery
+    assert persisted["behaviour"]["answers"] == 1
+    assert len(firestore_store.recent_events(learner["id"], 20)) == 8
+
+
+def test_migrated_tokens_support_lookup_and_logout(firestore_store):
+    learner = user()
+    batch = firestore_store.db.batch()
+    for collection, document_id, payload in load_documents({
+        "users": {learner["id"]: learner}, "tokens": {"hash": learner["id"]},
+    }):
+        batch.set(firestore_store.db.collection(collection).document(document_id), payload)
+    batch.commit()
+    assert firestore_store.get_token_user_id("hash") == learner["id"]
+    assert firestore_store.find_user_by_email(learner["email"])["id"] == learner["id"]
+    firestore_store.delete_token("hash")
+    assert firestore_store.get_token_user_id("hash") is None

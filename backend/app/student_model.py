@@ -31,9 +31,9 @@ SLOW_ANSWER_MS = 20_000
 EXPLORATION = 0.35
 
 
-def log_event(user_id: str, event_type: str, **data) -> dict:
+def log_event(events: list[dict], user_id: str, event_type: str, **data) -> dict:
     event = {"id": uuid.uuid4().hex[:12], "ts": now_iso(), "userId": user_id, "type": event_type, **data}
-    store.add_event(event)
+    events.append(event)
     return event
 
 

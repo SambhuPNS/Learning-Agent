@@ -153,7 +153,7 @@ def me(user: dict = Depends(auth.current_user)) -> dict:
 @app.put("/api/profile")
 def save_profile(body: ProfileIn, user: dict = Depends(auth.current_student)) -> dict:
     user["profile"] = body.model_dump()
-    store.save_user(user)
+    store.save_profile(user["id"], user["profile"])
     return auth.public_user(user)
 
 

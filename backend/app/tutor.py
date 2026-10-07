@@ -13,7 +13,7 @@ from fastapi import HTTPException
 
 from . import answers, gemini, student_model, topics
 from .config import gemini_enabled
-from .store import store
+from .store import ConcurrentUpdateError, bounded_session, store
 
 log = logging.getLogger("tutor.engine")
 
@@ -125,8 +125,8 @@ def _public_question(question: dict | None) -> dict | None:
     return {"prompt": question["prompt"], "format": question["format"], "options": question.get("options", [])}
 
 
-def _learner_view(user: dict, topic: dict, lesson: dict, session: dict, last_response_ms: int | None = None) -> dict:
-    model = student_model.get_model(user)
+def _learner_view(user: dict, topic: dict, lesson: dict, session: dict, model: dict,
+                  last_response_ms: int | None = None) -> dict:
     prior = student_model.prior_mastery(user, topic)
     item = student_model.concept(model, lesson["id"], prior)
     self_reported = (user.get("profile") or {}).get("learningStyle")
@@ -142,9 +142,9 @@ def _learner_view(user: dict, topic: dict, lesson: dict, session: dict, last_res
     }
 
 
-def _state(user: dict, topic: dict, lesson: dict, session: dict) -> dict:
-    tutor_steps = sum(1 for item in session["history"] if item["role"] == "tutor")
-    learner = _learner_view(user, topic, lesson, session)
+def _state(user: dict, topic: dict, lesson: dict, session: dict, model: dict) -> dict:
+    tutor_steps = session.get("tutorSteps", sum(1 for item in session["history"] if item["role"] == "tutor"))
+    learner = _learner_view(user, topic, lesson, session, model)
     return {
         "lessonId": session["lessonId"],
         "correct": session["correct"],
@@ -206,9 +206,9 @@ def _instruction(action: str, text: str | None, session: dict, graded: bool | No
     return f"The student asked their own question: \"{text}\". Answer it clearly at their level using the TEACHING STRATEGY and link it back to the lesson. {repeat}"
 
 
-def _prompt(user: dict, topic: dict, lesson: dict, session: dict, action: str, text: str | None, graded: bool | None, strategy: str | None) -> str:
+def _prompt(user: dict, topic: dict, lesson: dict, session: dict, action: str, text: str | None,
+            graded: bool | None, strategy: str | None, model: dict) -> str:
     profile = user.get("profile") or {}
-    model = student_model.get_model(user)
     prior = student_model.prior_mastery(user, topic)
     student = {
         "name": user["name"].split()[0],
@@ -356,17 +356,24 @@ def _choose_strategy(user: dict, model: dict, session: dict, action: str, graded
 
 async def take_turn(user: dict, lesson_id: str, action: str, text: str | None, meta: dict | None = None) -> dict:
     topic, lesson = topics.find_lesson(lesson_id)
+    key = _session_key(user["id"], lesson_id)
+    try:
+        user, model, session, version = store.get_learning_state(user["id"], key, student_model._new_model)
+    except ConcurrentUpdateError as exc:
+        raise HTTPException(409, str(exc)) from exc
     if not user.get("profile"):
         raise HTTPException(409, "Please finish your learning profile first.")
     meta = meta or {}
 
-    key = _session_key(user["id"], lesson_id)
-    session = store.get_session(key)
-    if session:
+    if session and action != "restart":
         for field, default in _new_session(lesson_id, topic["id"]).items():
             session.setdefault(field, default)
+        try:
+            session = bounded_session(session)
+        except ValueError as exc:
+            raise HTTPException(413, str(exc)) from exc
     if action == "start" and session and session["history"]:
-        return _response(user, topic, lesson, session, notice=None)
+        return _response(user, topic, lesson, session, model, notice=None)
     if action in ("start", "restart") or not session:
         session = _new_session(lesson_id, topic["id"])
         action = "start"
@@ -382,7 +389,7 @@ async def take_turn(user: dict, lesson_id: str, action: str, text: str | None, m
     if action in ("answer", "ask") and not text:
         raise HTTPException(400, "Please type or say something first.")
 
-    model = student_model.get_model(user)
+    events: list[dict] = []
     prior = student_model.prior_mastery(user, topic)
     student_model.concept(model, lesson_id, prior)
     attributed_strategy = session.get("lastStrategy")
@@ -394,21 +401,21 @@ async def take_turn(user: dict, lesson_id: str, action: str, text: str | None, m
 
     graded = answers.matches(text, pending) if action == "answer" else None
     if action == "start":
-        student_model.log_event(user["id"], "lesson_started", **base_event)
+        student_model.log_event(events, user["id"], "lesson_started", **base_event)
     else:
         session["history"].append({"role": "student", "action": action, "text": text or ACTION_LABELS[action]})
     if action == "continue":
-        student_model.log_event(user["id"], "continue", dwellMs=response_ms, **base_event)
+        student_model.log_event(events, user["id"], "continue", dwellMs=response_ms, **base_event)
     elif action == "hint":
         session["hintUsed"] = True
         student_model.record_signal(model, "hint")
-        student_model.log_event(user["id"], "hint", question=pending["prompt"], waitedMs=response_ms, **base_event)
+        student_model.log_event(events, user["id"], "hint", question=pending["prompt"], waitedMs=response_ms, **base_event)
     elif action == "explain_again":
         student_model.record_signal(model, "explain_again", strategy=attributed_strategy)
-        student_model.log_event(user["id"], "explain_again", strategy=attributed_strategy, inputMode=input_mode, **base_event)
+        student_model.log_event(events, user["id"], "explain_again", strategy=attributed_strategy, inputMode=input_mode, **base_event)
     elif action == "ask":
         student_model.record_signal(model, "ask")
-        student_model.log_event(user["id"], "question_asked", text=text, inputMode=input_mode, **base_event)
+        student_model.log_event(events, user["id"], "question_asked", text=text, inputMode=input_mode, **base_event)
 
     strategy = _choose_strategy(user, model, session, action, graded)
     notice = None
@@ -416,7 +423,7 @@ async def take_turn(user: dict, lesson_id: str, action: str, text: str | None, m
     step = hidden = misconception = None
     if gemini_enabled():
         try:
-            prompt = _prompt(user, topic, lesson, session, action, text, graded, strategy)
+            prompt = _prompt(user, topic, lesson, session, action, text, graded, strategy, model)
             raw = await gemini.generate_json(SYSTEM_PROMPT, [{"text": prompt}], STEP_SCHEMA)
             step, hidden, misconception = _clean_step(raw)
             source = "gemini"
@@ -445,7 +452,7 @@ async def take_turn(user: dict, lesson_id: str, action: str, text: str | None, m
             strategy=attributed_strategy, input_mode=input_mode, misconception=None if correct else misconception,
         )
         student_model.log_event(
-            user["id"], "answer", question=pending["prompt"], answer=text, correct=correct, responseMs=response_ms,
+            events, user["id"], "answer", question=pending["prompt"], answer=text, correct=correct, responseMs=response_ms,
             slow=result["slow"], inputMode=input_mode, usedHint=session["hintUsed"], attempt=session["attempts"],
             strategy=attributed_strategy, misconception=None if correct else misconception, mastery=result["mastery"], **base_event,
         )
@@ -466,25 +473,33 @@ async def take_turn(user: dict, lesson_id: str, action: str, text: str | None, m
         session["complete"] = True
         session["pending"] = None
     step.update(id=uuid.uuid4().hex, question=_public_question(session["pending"]), source=source)
+    session["tutorSteps"] = session.get("tutorSteps", sum(item["role"] == "tutor" for item in session["history"])) + 1
     session["history"].append({"role": "tutor", "step": step})
-    student_model.log_event(user["id"], "tutor_step", kind=step["kind"], title=step["title"], strategy=step.get("strategy"),
+    student_model.log_event(events, user["id"], "tutor_step", kind=step["kind"], title=step["title"], strategy=step.get("strategy"),
                             source=source, hasQuestion=step["question"] is not None, **base_event)
 
-    state = _state(user, topic, lesson, session)
+    state = _state(user, topic, lesson, session, model)
     if session["complete"]:
-        student_model.log_event(user["id"], "lesson_completed", mastery=state["mastery"], **base_event)
+        student_model.log_event(events, user["id"], "lesson_completed", mastery=state["mastery"], **base_event)
     user.setdefault("progress", {})[lesson_id] = {"mastery": state["mastery"], "complete": session["complete"], "started": True}
-    store.save_model(user["id"], model)
-    store.save_session(key, session)
-    store.save_user(user)
-    return _response(user, topic, lesson, session, notice, response_ms if action == "answer" else None)
+    try:
+        session = bounded_session(session)
+    except ValueError as exc:
+        raise HTTPException(413, str(exc)) from exc
+    try:
+        store.commit_learning_turn(user["id"], key, version, model, session, user["progress"][lesson_id], events)
+    except ConcurrentUpdateError as exc:
+        log.info("Discarding concurrent lesson turn for user %s: %s", user["id"], exc)
+        raise HTTPException(409, "Your learning state changed in another request. Reopen the lesson before trying again.") from exc
+    return _response(user, topic, lesson, session, model, notice, response_ms if action == "answer" else None)
 
 
-def _response(user: dict, topic: dict, lesson: dict, session: dict, notice: str | None, last_response_ms: int | None = None) -> dict:
+def _response(user: dict, topic: dict, lesson: dict, session: dict, model: dict,
+              notice: str | None, last_response_ms: int | None = None) -> dict:
     return {
         "history": session["history"],
-        "state": _state(user, topic, lesson, session),
-        "learner": _learner_view(user, topic, lesson, session, last_response_ms),
+        "state": _state(user, topic, lesson, session, model),
+        "learner": _learner_view(user, topic, lesson, session, model, last_response_ms),
         "notice": notice,
     }
 
