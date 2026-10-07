@@ -3,7 +3,12 @@
 **/.venv
 **/__pycache__
 **/*.py[cod]
-backend/.env
+**/.env
+**/.env.*
+!**/.env.example
+**/.pytest_cache
+**/logs
+**/*.log
 backend/data
 frontend/dist
 npm-debug.log*
