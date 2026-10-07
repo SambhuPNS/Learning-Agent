@@ -16,9 +16,15 @@ def document_batches(documents: list[tuple[str, str, dict[str, Any]]], size: int
 
 def load_documents(data: dict[str, Any]) -> list[tuple[str, str, dict[str, Any]]]:
     documents: list[tuple[str, str, dict[str, Any]]] = []
-    for collection in ("users", "tokens", "sessions", "studentModels", "topics"):
+    for collection in ("users", "sessions", "studentModels", "topics"):
         for document_id, value in data.get(collection, {}).items():
+            if not isinstance(value, dict):
+                raise ValueError(f"{collection}/{document_id} must contain a document object.")
             documents.append((collection, document_id, value))
+    for token_hash, user_id in data.get("tokens", {}).items():
+        if not isinstance(user_id, str) or not user_id:
+            raise ValueError(f"Token {token_hash} must contain a nonempty user ID.")
+        documents.append(("tokens", token_hash, {"userId": user_id}))
     for user_id, user in data.get("users", {}).items():
         email = user.get("email", "").strip().lower()
         if email:
@@ -51,11 +57,12 @@ def main() -> None:
     with args.source.open(encoding="utf-8") as handle:
         data = json.load(handle)
 
+    documents = load_documents(data)
     db = firestore.Client(project=args.project)
     if not args.overwrite:
         populated = [
             collection
-            for collection in ("users", "topics", "events")
+            for collection in ("users", "userEmails", "tokens", "sessions", "studentModels", "topics", "events")
             if next(db.collection(collection).limit(1).stream(), None)
         ]
         if populated:
@@ -64,7 +71,6 @@ def main() -> None:
                 "Review it first, then rerun with --overwrite if replacing matching document IDs is intentional."
             )
 
-    documents = load_documents(data)
     for group in document_batches(documents):
         batch = db.batch()
         for collection, document_id, value in group:
