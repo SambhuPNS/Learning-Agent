@@ -361,7 +361,7 @@ async def take_turn(user: dict, lesson_id: str, action: str, text: str | None, m
     meta = meta or {}
 
     key = _session_key(user["id"], lesson_id)
-    session = store.data["sessions"].get(key)
+    session = store.get_session(key)
     if session:
         for field, default in _new_session(lesson_id, topic["id"]).items():
             session.setdefault(field, default)
@@ -470,13 +470,13 @@ async def take_turn(user: dict, lesson_id: str, action: str, text: str | None, m
     student_model.log_event(user["id"], "tutor_step", kind=step["kind"], title=step["title"], strategy=step.get("strategy"),
                             source=source, hasQuestion=step["question"] is not None, **base_event)
 
-    with store.lock:
-        store.data["sessions"][key] = session
-        state = _state(user, topic, lesson, session)
-        if session["complete"]:
-            student_model.log_event(user["id"], "lesson_completed", mastery=state["mastery"], **base_event)
-        user.setdefault("progress", {})[lesson_id] = {"mastery": state["mastery"], "complete": session["complete"], "started": True}
-        store.save()
+    state = _state(user, topic, lesson, session)
+    if session["complete"]:
+        student_model.log_event(user["id"], "lesson_completed", mastery=state["mastery"], **base_event)
+    user.setdefault("progress", {})[lesson_id] = {"mastery": state["mastery"], "complete": session["complete"], "started": True}
+    store.save_model(user["id"], model)
+    store.save_session(key, session)
+    store.save_user(user)
     return _response(user, topic, lesson, session, notice, response_ms if action == "answer" else None)
 
 
@@ -490,5 +490,5 @@ def _response(user: dict, topic: dict, lesson: dict, session: dict, notice: str 
 
 
 def pending_question(user: dict, lesson_id: str) -> dict | None:
-    session = store.data["sessions"].get(_session_key(user["id"], lesson_id))
+    session = store.get_session(_session_key(user["id"], lesson_id))
     return session["pending"] if session else None

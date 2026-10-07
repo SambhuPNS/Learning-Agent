@@ -33,7 +33,7 @@ EXPLORATION = 0.35
 
 def log_event(user_id: str, event_type: str, **data) -> dict:
     event = {"id": uuid.uuid4().hex[:12], "ts": now_iso(), "userId": user_id, "type": event_type, **data}
-    store.data["events"].append(event)
+    store.add_event(event)
     return event
 
 
@@ -49,7 +49,7 @@ def _new_model() -> dict:
 
 
 def get_model(user: dict) -> dict:
-    return store.data["studentModels"].setdefault(user["id"], _new_model())
+    return store.get_model(user["id"], _new_model)
 
 
 def prior_mastery(user: dict, topic: dict) -> float:
@@ -259,5 +259,4 @@ def insights(user: dict) -> dict:
 
 
 def recent_events(user_id: str, limit: int = 40) -> list[dict]:
-    events = [dict(event) for event in reversed(store.data["events"]) if event["userId"] == user_id]
-    return events[:limit]
+    return store.recent_events(user_id, limit)
