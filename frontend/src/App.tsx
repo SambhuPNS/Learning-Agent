@@ -130,7 +130,7 @@ function App() {
           <button type="button" onClick={() => setView('profile')}><SlidersHorizontal size={17} /> Learning profile</button>
         </nav>
         <p className={`engine-badge ${health?.gemini ? 'live' : ''}`}>
-          {health?.gemini ? `Gemini connected · ${health.model}` : 'Mock tutor (no Gemini key)'}
+          {health?.gemini ? `Vertex AI · ${health.model}` : 'Mock tutor (no GCP project configured)'}
         </p>
         <button type="button" className="signout" onClick={signOut}><LogOut size={16} /> Sign out</button>
       </aside>

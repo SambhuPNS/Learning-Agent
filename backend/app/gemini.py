@@ -1,4 +1,4 @@
-"""Minimal Gemini REST client. The API key never leaves the backend."""
+"""Gemini on Vertex AI, authenticated with Application Default Credentials."""
 
 import asyncio
 import base64
@@ -8,43 +8,72 @@ import logging
 import re
 import time
 import wave
+from functools import lru_cache
+from threading import Lock
 
+import google.auth
 import httpx
+from google.auth.credentials import Credentials
+from google.auth.exceptions import GoogleAuthError
+from google.auth.transport.requests import Request
 
-from .config import GEMINI_API_KEY, GEMINI_FALLBACK_MODELS, GEMINI_MODEL, GEMINI_TTS_MODEL, GEMINI_TTS_VOICE
+from .config import (
+    GEMINI_FALLBACK_MODELS, GEMINI_MODEL, GEMINI_TTS_MODEL, GEMINI_TTS_VOICE,
+    GOOGLE_CLOUD_PROJECT, VERTEX_AI_LOCATION,
+)
 
-API_ROOT = "https://generativelanguage.googleapis.com/v1beta/models"
 RETRYABLE = {429, 500, 502, 503, 504}
 COOLDOWN_SECONDS = 90
-log = logging.getLogger("tutor.gemini")
+log = logging.getLogger("tutor.vertex")
 _cooldown_until: dict[str, float] = {}
+_auth_lock = Lock()
 
 
 class GeminiError(RuntimeError):
     pass
 
 
+@lru_cache(maxsize=1)
+def _credentials() -> Credentials:
+    credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+    return credentials
+
+
+def _authorized_headers(url: str) -> dict[str, str]:
+    headers: dict[str, str] = {}
+    with _auth_lock:
+        _credentials().before_request(Request(), "POST", url, headers)
+    return headers
+
+
 async def _generate(model: str, body: dict, timeout: float, retries: int = 1) -> dict:
-    if not GEMINI_API_KEY:
-        raise GeminiError("GEMINI_API_KEY is not configured")
+    if not GOOGLE_CLOUD_PROJECT or not VERTEX_AI_LOCATION:
+        raise GeminiError("GOOGLE_CLOUD_PROJECT and VERTEX_AI_LOCATION are required for Vertex AI")
+    host = "aiplatform.googleapis.com" if VERTEX_AI_LOCATION == "global" else f"{VERTEX_AI_LOCATION}-aiplatform.googleapis.com"
+    url = (f"https://{host}/v1/projects/{GOOGLE_CLOUD_PROJECT}/locations/{VERTEX_AI_LOCATION}"
+           f"/publishers/google/models/{model}:generateContent")
     for attempt in range(retries + 1):
         try:
+            headers = await asyncio.to_thread(_authorized_headers, url)
             async with httpx.AsyncClient(timeout=timeout) as client:
                 response = await client.post(
-                    f"{API_ROOT}/{model}:generateContent",
-                    headers={"x-goog-api-key": GEMINI_API_KEY},
+                    url,
+                    headers=headers,
                     json=body,
                 )
+        except GoogleAuthError as exc:
+            raise GeminiError("Vertex AI authentication failed. Configure Application Default Credentials "
+                              "locally or attach an authorized runtime service account.") from exc
         except httpx.HTTPError as exc:
-            raise GeminiError(f"Could not reach Gemini: {exc}") from exc
+            raise GeminiError(f"Could not reach Vertex AI: {exc}") from exc
         if response.status_code < 400:
             return response.json()
         if response.status_code in RETRYABLE:
             _cooldown_until[model] = time.monotonic() + COOLDOWN_SECONDS
         if response.status_code not in RETRYABLE or attempt == retries:
-            raise GeminiError(f"Gemini {model} returned {response.status_code}: {response.text[:400]}")
+            raise GeminiError(f"Vertex AI {model} returned {response.status_code}: {response.text[:400]}")
         await asyncio.sleep(1.2 * (attempt + 1))
-    raise GeminiError(f"Gemini {model} failed")
+    raise GeminiError(f"Vertex AI {model} failed")
 
 
 async def _generate_with_fallback(body: dict, timeout: float) -> dict:
@@ -96,7 +125,7 @@ def _pcm_to_wav(pcm: bytes, rate: int) -> bytes:
 
 async def synthesize(text: str) -> bytes:
     body = {
-        "contents": [{"parts": [{"text": text}]}],
+        "contents": [{"role": "user", "parts": [{"text": text}]}],
         "generationConfig": {
             "responseModalities": ["AUDIO"],
             "speechConfig": {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": GEMINI_TTS_VOICE}}},

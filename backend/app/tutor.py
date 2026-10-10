@@ -48,14 +48,14 @@ STEP_SCHEMA = {
             "type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 4,
             "description": "What appears on screen. Short, friendly sentences. Use digits like 3/4 for fractions.",
         },
+        "layout": {"type": "array", "items": {"type": "string", "enum": ["text", "visual"]}, "maxItems": 7,
+                   "description": "Display order. Each text uses the next paragraph; each visual uses the next diagram. Include every paragraph and diagram exactly once."},
         "speech": {
             "type": "string",
             "description": "What the tutor says aloud: the explanation plus the question if one is asked. Natural spoken English under 80 words. Write fractions and symbols as words.",
         },
-        "visual": {
-            "type": ["object", "null"],
-            "description": "fraction-circles/fraction-bars/number-line use 'fractions'. flow (ordered steps or a process) and comparison (2-3 columns contrasting ideas) use 'items'.",
-            "properties": {
+        "visuals": {"type": "array", "maxItems": 3, "description": "Diagrams in the order used by layout; empty if none.",
+            "items": {"type": ["object", "null"], "properties": {
                 "type": {"type": "string", "enum": VISUAL_TYPES},
                 "caption": {"type": "string"},
                 "fractions": {"type": "array", "items": FRACTION_SCHEMA, "maxItems": 4},
@@ -65,7 +65,7 @@ STEP_SCHEMA = {
                               "required": ["label", "detail"]},
                 },
             },
-            "required": ["type", "caption", "fractions", "items"],
+            "required": ["type", "caption", "fractions", "items"]},
         },
         "feedback": {
             "type": ["object", "null"],
@@ -89,7 +89,7 @@ STEP_SCHEMA = {
             "required": ["prompt", "format", "options", "expectedAnswer", "acceptableAnswers", "hint"],
         },
     },
-    "required": ["kind", "title", "strategy", "paragraphs", "speech", "visual", "feedback", "question"],
+    "required": ["kind", "title", "strategy", "paragraphs", "layout", "speech", "visuals", "feedback", "question"],
 }
 
 SYSTEM_PROMPT = """You are Brightpath, a warm, patient one-to-one tutor for school students. You can teach any subject.
@@ -104,6 +104,7 @@ Teaching rules:
 - Adapt to the STUDENT MODEL: its evidence about mastery, misconceptions and behaviour is more reliable than the sign-up answers.
 - Use the student's interests in examples, and keep language right for their grade.
 - Visuals: fraction visuals only for fractions; number-line for numbers; flow for processes or ordered steps; comparison to contrast ideas. A visual must never give away the answer to the question on the same step.
+- Use layout to order the paragraphs and up to three useful visuals. Each 'text' displays the next paragraph, each 'visual' displays the next diagram. Include each exactly once; consecutive diagrams are fine. Keep speech consistent with the paragraphs.
 - 'teach' and 'summary' steps have question = null. 'question' steps must include a question. 'feedback' has feedback set.
 - Stay within the topic. If the student asks something off-topic or inappropriate, kindly steer back to the lesson.
 """
@@ -275,15 +276,29 @@ def _clean_step(raw: dict) -> tuple[dict, dict | None, str | None]:
     feedback = raw.get("feedback")
     misconception = str(feedback.get("misconception", "")).strip() if feedback else ""
     kind = raw.get("kind", "teach")
+    if kind not in ("teach", "question", "feedback", "summary"):
+        kind = "teach"
     if kind == "question" and not hidden:
         kind = "teach"
     strategy = raw.get("strategy") if raw.get("strategy") in student_model.STRATEGIES else None
+    paragraphs = [str(p) for p in raw.get("paragraphs") or []][:4] or ["Let's keep going."]
+    visuals = [visual for item in (raw.get("visuals") or [])[:3] if (visual := _clean_visual(item))]
+    content = []
+    paragraph_index = visual_index = 0
+    for block_type in (raw.get("layout") or [])[:7] + ["text"] * len(paragraphs) + ["visual"] * len(visuals):
+        if block_type == "text" and paragraph_index < len(paragraphs):
+            content.append({"type": "text", "text": paragraphs[paragraph_index]})
+            paragraph_index += 1
+        elif block_type == "visual" and visual_index < len(visuals):
+            content.append({"type": "visual", "visual": visuals[visual_index]})
+            visual_index += 1
     step = {
         "kind": kind,
         "title": str(raw.get("title") or "Let's keep going"),
-        "paragraphs": [str(p) for p in raw.get("paragraphs") or []][:4] or ["Let's keep going."],
+        "paragraphs": paragraphs,
         "speech": str(raw.get("speech") or " ".join(raw.get("paragraphs") or [])),
-        "visual": _clean_visual(raw.get("visual")),
+        "visual": _clean_visual(raw.get("visual")) or (visuals[0] if visuals else None),
+        "content": content,
         "feedback": {"correct": bool(feedback.get("correct")), "message": str(feedback.get("message", ""))} if feedback else None,
         "strategy": strategy,
     }

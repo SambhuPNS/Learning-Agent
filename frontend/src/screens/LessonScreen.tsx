@@ -53,9 +53,14 @@ function StepCard({ step, active, speaking, onReplay }: { step: TutorStep; activ
         </div>
       )}
       <div className="step-body">
-        {step.paragraphs.map((paragraph, index) => <p key={index}>{paragraph}</p>)}
+        {step.content?.length ? step.content.map((block, index) => block.type === 'text'
+          ? <p key={index}>{block.text}</p>
+          : <FractionVisual key={index} visual={block.visual} />)
+          : <>
+              {step.paragraphs.map((paragraph, index) => <p key={index}>{paragraph}</p>)}
+              {step.visual && <FractionVisual visual={step.visual} />}
+            </>}
       </div>
-      {step.visual && <FractionVisual visual={step.visual} />}
       {step.question && (
         <div className="question-callout">
           <MessageCircleQuestion size={18} />
@@ -357,7 +362,7 @@ export function LessonScreen({
                     onClick={listen}
                     disabled={!canListen || busy || voiceState === 'thinking'}
                     aria-label={voiceState === 'listening' ? 'Stop listening' : 'Speak to your tutor'}
-                    title={canListen ? 'Speak to your tutor' : 'Voice input needs Chrome, Edge or Safari, or a Gemini key on the backend'}
+                    title={canListen ? 'Speak to your tutor' : 'Voice input needs Chrome, Edge or Safari, or Vertex AI configured on the backend'}
                     style={{ '--level': level } as React.CSSProperties}
                   >
                     {voiceState === 'thinking' ? <LoaderCircle className="spin" size={22} /> : voiceState === 'listening' ? <Square size={18} fill="currentColor" /> : <Mic size={22} />}
@@ -468,7 +473,7 @@ export function LessonScreen({
             {learner && <MasteryBar value={learner.mastery} />}
             {learner?.watchFor && <p className="watch-for">Working on: {learner.watchFor}</p>}
             <p className={`engine-badge ${geminiVoice ? 'live' : ''}`}>
-              <Sparkles size={13} /> {geminiVoice ? `Gemini · ${health?.model}` : 'Offline tutor'}
+              <Sparkles size={13} /> {geminiVoice ? `Vertex AI · ${health?.model}` : 'Offline tutor'}
             </p>
           </section>
         </aside>

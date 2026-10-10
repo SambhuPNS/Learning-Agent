@@ -4,7 +4,7 @@ from app import auth, store as store_module  # noqa: E402
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from app import student_model  # noqa: E402
+from app import student_model, tutor  # noqa: E402
 from app.answers import interpret, matches  # noqa: E402
 from app.main import app  # noqa: E402
 
@@ -33,6 +33,19 @@ def test_answer_extraction():
     assert matches("3 over 8", {"options": [], "acceptableAnswers": ["3/8"]})
     assert interpret("can I get a hint", q)["intent"] == "hint"
     assert interpret("okay next", None)["intent"] == "continue"
+
+
+def test_lesson_content_preserves_text_and_multiple_visuals():
+    visual = {"type": "flow", "caption": "Steps", "fractions": [],
+              "items": [{"label": "First", "detail": "Do this"}]}
+    raw = {"kind": "teach", "paragraphs": ["Begin", "Then continue"],
+           "layout": ["text", "visual", "text", "visual", "visual"], "visuals": [visual, visual, visual]}
+    step, _, _ = tutor._clean_step(raw)
+    assert step["kind"] == "teach"
+    assert [block["type"] for block in step["content"]] == ["text", "visual", "text", "visual", "visual"]
+    assert step["content"][1]["visual"]["caption"] == "Steps"
+    assert step["paragraphs"] == ["Begin", "Then continue"]
+    assert tutor._clean_step({**raw, "kind": "visual"})[0]["kind"] == "teach"
 
 
 def test_bkt_and_strategy_policy():

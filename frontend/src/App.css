@@ -177,6 +177,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .kind-badge.feedback { color: #2f6b5a; background: var(--teal-soft); }
 .kind-badge.summary { color: var(--amber); background: var(--amber-soft); }
 .step-body { display: grid; gap: 9px; }
+.step-body .visual { margin: 7px 0; }
 .step-body p { color: #273a57; font-size: 16px; line-height: 1.6; }
 .feedback-banner { display: flex; gap: 8px; align-items: center; padding: 9px 12px; margin-bottom: 12px; font-size: 14px; border-radius: 8px; }
 .feedback-banner.correct { color: #0d7b5c; background: var(--teal-soft); }

@@ -42,6 +42,7 @@ export type Visual = {
   items?: { label: string; detail: string }[]
   caption: string
 }
+export type LessonContent = { type: 'text'; text: string } | { type: 'visual'; visual: Visual }
 
 export type Question = { prompt: string; format: 'choice' | 'text'; options: string[] }
 
@@ -52,6 +53,7 @@ export type TutorStep = {
   paragraphs: string[]
   speech: string
   visual: Visual | null
+  content?: LessonContent[] | null
   feedback: { correct: boolean; message: string } | null
   question: Question | null
   strategy: Strategy | null

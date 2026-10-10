@@ -1,10 +1,22 @@
 # Brightpath Tutor
 
-React/Vite frontend and FastAPI backend, packaged as one Cloud Run service. The backend serves `/api/*` and the built frontend at `/`. Gemini generates structured lesson steps; React renders the content and predefined visuals.
+React/Vite frontend and FastAPI backend, packaged as one Cloud Run service. The backend serves `/api/*` and the built frontend at `/`. Gemini on Vertex AI generates structured lesson steps; React renders the content and predefined visuals.
 
 ## Local development
 
 Create a Python virtual environment in `backend/.venv`, install `backend/requirements.txt`, and copy `backend/.env.example` to `backend/.env`. Keep `FIRESTORE_ENABLED=false` for local JSON storage. Use one Uvicorn worker; local JSON storage is not shared across processes.
+
+To enable AI, set `GOOGLE_CLOUD_PROJECT` to your billing-enabled GCP project,
+enable `aiplatform.googleapis.com`, and run `gcloud auth application-default login`.
+Your ADC identity needs Vertex AI access, typically `roles/aiplatform.user`.
+Set `VERTEX_AI_LOCATION` (default `global`) and the `GEMINI_MODEL`,
+`GEMINI_FALLBACK_MODELS`, `GEMINI_TTS_MODEL`, and `GEMINI_TTS_VOICE` selections to
+values available in that project/location. The default text model is
+`gemini-3.8-flash`; no fallback models are enabled by default. Leave
+`GOOGLE_CLOUD_PROJECT` empty for the scripted mock tutor. `GEMINI_API_KEY` is no
+longer used. The client refreshes ADC tokens automatically, outside the async
+event loop. Existing `gemini` health/source fields and internal names are retained
+because the model remains Gemini; the API transport and authentication are Vertex AI.
 
 ```sh
 cd backend
@@ -24,9 +36,9 @@ The Vite development server proxies `/api` to port 8000. Production uses the sam
 
 ## Cloud Run deployment
 
-Use a GCP project with billing enabled. Enable Cloud Run, Cloud Build, Artifact Registry, Firestore, and Secret Manager APIs. Create a **Firestore Native mode `(default)` database** in the desired location; the application does not select a named database. Set `GOOGLE_CLOUD_PROJECT` to that project's ID and `FIRESTORE_ENABLED=true`. Do not use local JSON storage in production: Cloud Run's writable filesystem is temporary.
+Use a GCP project with billing enabled. Enable Cloud Run, Cloud Build, Artifact Registry, Firestore, Secret Manager, and Vertex AI (`aiplatform.googleapis.com`) APIs. Create a **Firestore Native mode `(default)` database** in the desired location; the application does not select a named database. Set `GOOGLE_CLOUD_PROJECT` to that project's ID and `FIRESTORE_ENABLED=true`. Do not use local JSON storage in production: Cloud Run's writable filesystem is temporary.
 
-Create a dedicated runtime service account with `roles/datastore.user`. Create `gemini-api-key` and `teacher-invite-code` secrets in Secret Manager, then grant that account `roles/secretmanager.secretAccessor` on those two secrets only. Supply a nonempty teacher invite code to prevent unrestricted teacher registration. Never put secret values in Docker build arguments, the frontend bundle, or source control.
+Create a dedicated runtime service account with `roles/datastore.user` and `roles/aiplatform.user`. Vertex AI uses that account's attached credentials; no Gemini API key is needed. Create a `teacher-invite-code` secret in Secret Manager, then grant that account `roles/secretmanager.secretAccessor` on that secret only. Supply a nonempty teacher invite code to prevent unrestricted teacher registration. Never put secret values in Docker build arguments, the frontend bundle, or source control.
 
 Deploy the indexes before using teacher dashboards (Firebase CLI required):
 
@@ -51,12 +63,12 @@ gcloud run deploy brightpath \
   --region "$REGION" \
   --image "$IMAGE" \
   --service-account "$RUNTIME_SERVICE_ACCOUNT" \
-  --set-env-vars "FIRESTORE_ENABLED=true,GOOGLE_CLOUD_PROJECT=$PROJECT_ID" \
-  --set-secrets "GEMINI_API_KEY=gemini-api-key:latest,TEACHER_INVITE_CODE=teacher-invite-code:latest" \
+  --set-env-vars "FIRESTORE_ENABLED=true,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,VERTEX_AI_LOCATION=global" \
+  --set-secrets "TEACHER_INVITE_CODE=teacher-invite-code:latest" \
   --allow-unauthenticated
 ```
 
-Use a unique deployment tag. Verify the Gemini text/fallback/TTS model IDs are available to your key; configure them as backend environment variables when necessary. Public Cloud Run invocation allows the browser to reach the login page; protected API endpoints still require application authentication. Choose service memory, timeouts, concurrency, and maximum instances for your workload and budget.
+Use a unique deployment tag. Verify the Gemini text/fallback/TTS model IDs and voice are available through Vertex AI in your project/location; configure them as backend environment variables when necessary. Public Cloud Run invocation allows the browser to reach the login page; protected API endpoints still require application authentication. Choose service memory, timeouts, concurrency, and maximum instances for your workload and budget.
 
 The container listens on `0.0.0.0:$PORT` (default 8080). Verify `/`, frontend assets, `/api/health`, signup/login, a lesson, voice, and teacher dashboards after deploying. Check that learning state survives a new container revision.
 
