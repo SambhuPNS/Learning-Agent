@@ -16,6 +16,8 @@ GEMINI_TTS_MODEL = os.getenv("GEMINI_TTS_MODEL", "gemini-3.8-flash-lite-tts").st
 GEMINI_TTS_VOICE = os.getenv("GEMINI_TTS_VOICE", "Achird").strip()
 # Empty means anyone may register as a teacher (fine for local demos).
 TEACHER_INVITE_CODE = os.getenv("TEACHER_INVITE_CODE", "").strip()
+FIRESTORE_ENABLED = os.getenv("FIRESTORE_ENABLED", "").strip().lower() in {"1", "true", "yes"}
+GOOGLE_CLOUD_PROJECT = os.getenv("GOOGLE_CLOUD_PROJECT", "").strip()
 
 
 def gemini_enabled() -> bool:

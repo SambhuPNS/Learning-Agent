@@ -1,9 +1,11 @@
 import logging
 import re
 from collections import defaultdict
+from pathlib import Path
 from typing import Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Response
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
 from . import auth, gemini, speech, student_model, topics, tutor
@@ -150,9 +152,8 @@ def me(user: dict = Depends(auth.current_user)) -> dict:
 
 @app.put("/api/profile")
 def save_profile(body: ProfileIn, user: dict = Depends(auth.current_student)) -> dict:
-    with store.lock:
-        user["profile"] = body.model_dump()
-        store.save()
+    user["profile"] = body.model_dump()
+    store.save_profile(user["id"], user["profile"])
     return auth.public_user(user)
 
 
@@ -253,11 +254,11 @@ def delete_topic(topic_id: str, teacher: dict = Depends(auth.current_teacher)) -
 
 
 def _students() -> list[dict]:
-    return [user for user in store.data["users"].values() if user.get("role", "student") == "student"]
+    return [user for user in store.all_users() if user.get("role", "student") == "student"]
 
 
 def _last_active(user_id: str) -> str | None:
-    return next((event["ts"] for event in reversed(store.data["events"]) if event["userId"] == user_id), None)
+    return store.last_active(user_id)
 
 
 @app.get("/api/teacher/students")
@@ -287,7 +288,7 @@ def teacher_students(teacher: dict = Depends(auth.current_teacher)) -> dict:
 
 @app.get("/api/teacher/students/{student_id}")
 def teacher_student(student_id: str, teacher: dict = Depends(auth.current_teacher)) -> dict:
-    user = store.data["users"].get(student_id)
+    user = store.get_user(student_id)
     if not user or user.get("role", "student") != "student":
         raise HTTPException(404, "Student not found.")
     events = student_model.recent_events(student_id, limit=60)
@@ -305,7 +306,7 @@ def teacher_overview(teacher: dict = Depends(auth.current_teacher)) -> dict:
     strategy_totals = {s: {"success": 0, "attempts": 0} for s in student_model.STRATEGIES}
     masteries, completed, needs_support, active = [], 0, 0, 0
     for user in students:
-        model = store.data["studentModels"].get(user["id"])
+        model = store.get_model(user["id"], student_model._new_model)
         completed += sum(1 for p in user.get("progress", {}).values() if p.get("complete"))
         if not model or not model["behaviour"]["answers"]:
             continue
@@ -343,3 +344,9 @@ def teacher_overview(teacher: dict = Depends(auth.current_teacher)) -> dict:
                         "successRate": round(100 * totals["success"] / totals["attempts"]) if totals["attempts"] else None}
                        for name, totals in strategy_totals.items()],
     }
+
+
+FRONTEND_DIR = Path("/app/frontend-dist")
+
+if FRONTEND_DIR.exists():
+    app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")

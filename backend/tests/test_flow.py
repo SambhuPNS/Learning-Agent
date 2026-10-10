@@ -1,16 +1,6 @@
 """Backend tests in offline (mock) mode: accounts, roles, teacher topics, the event log and the student model."""
 
-import sys
-import tempfile
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-from app import auth, config, store as store_module  # noqa: E402
-
-config.GEMINI_API_KEY = ""
-store_module.STORE_PATH = Path(tempfile.mkdtemp()) / "store.json"
-store_module.store.data = store_module.JsonStore.migrate({})
+from app import auth, store as store_module  # noqa: E402
 
 from fastapi.testclient import TestClient  # noqa: E402
 

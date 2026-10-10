@@ -1,0 +1,18 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "events",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "userId", "order": "ASCENDING" },
+        { "fieldPath": "ts", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": [
+    { "collectionGroup": "sessions", "fieldPath": "history", "indexes": [] },
+    { "collectionGroup": "studentModels", "fieldPath": "concepts", "indexes": [] },
+    { "collectionGroup": "studentModels", "fieldPath": "misconceptions", "indexes": [] },
+    { "collectionGroup": "users", "fieldPath": "progress", "indexes": [] }
+  ]
+}

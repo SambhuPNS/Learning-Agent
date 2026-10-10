@@ -20,7 +20,7 @@ def _hash_token(token: str) -> str:
 
 
 def _find_user_by_email(email: str) -> dict | None:
-    return next((u for u in store.data["users"].values() if u["email"] == email), None)
+    return store.find_user_by_email(email)
 
 
 def public_user(user: dict) -> dict:
@@ -34,55 +34,47 @@ def public_user(user: dict) -> dict:
     }
 
 
-def _issue_token(user_id: str) -> str:
-    token = secrets.token_urlsafe(32)
-    store.data["tokens"][_hash_token(token)] = user_id
-    return token
+def _new_token() -> str:
+    return secrets.token_urlsafe(32)
 
 
 def signup(name: str, email: str, password: str, role: str = "student", invite_code: str = "") -> tuple[str, dict]:
     email = email.strip().lower()
     if role == "teacher" and TEACHER_INVITE_CODE and not hmac.compare_digest(invite_code.strip(), TEACHER_INVITE_CODE):
         raise HTTPException(403, "The teacher invite code is not correct.")
-    with store.lock:
-        if _find_user_by_email(email):
-            raise HTTPException(409, "An account with this email already exists.")
-        salt = secrets.token_bytes(16)
-        user = {
-            "id": uuid.uuid4().hex,
-            "name": name.strip(),
-            "email": email,
-            "role": role,
-            "salt": salt.hex(),
-            "passwordHash": _hash_password(password, salt),
-            "createdAt": now_iso(),
-            "profile": None,
-            "progress": {},
-        }
-        store.data["users"][user["id"]] = user
-        token = _issue_token(user["id"])
-        store.save()
+    salt = secrets.token_bytes(16)
+    user = {
+        "id": uuid.uuid4().hex,
+        "name": name.strip(),
+        "email": email,
+        "role": role,
+        "salt": salt.hex(),
+        "passwordHash": _hash_password(password, salt),
+        "createdAt": now_iso(),
+        "profile": None,
+        "progress": {},
+    }
+    token = _new_token()
+    if not store.create_user(user, _hash_token(token)):
+        raise HTTPException(409, "An account with this email already exists.")
     return token, user
 
 
 def login(email: str, password: str) -> tuple[str, dict]:
     email = email.strip().lower()
-    with store.lock:
-        user = _find_user_by_email(email)
-        if not user:
-            raise HTTPException(401, "Incorrect email or password.")
-        expected = _hash_password(password, bytes.fromhex(user["salt"]))
-        if not hmac.compare_digest(expected, user["passwordHash"]):
-            raise HTTPException(401, "Incorrect email or password.")
-        token = _issue_token(user["id"])
-        store.save()
+    user = _find_user_by_email(email)
+    if not user:
+        raise HTTPException(401, "Incorrect email or password.")
+    expected = _hash_password(password, bytes.fromhex(user["salt"]))
+    if not hmac.compare_digest(expected, user["passwordHash"]):
+        raise HTTPException(401, "Incorrect email or password.")
+    token = _new_token()
+    store.save_token(_hash_token(token), user["id"])
     return token, user
 
 
 def logout(token: str) -> None:
-    with store.lock:
-        store.data["tokens"].pop(_hash_token(token), None)
-        store.save()
+    store.delete_token(_hash_token(token))
 
 
 def _token_from_header(authorization: str | None) -> str:
@@ -93,8 +85,8 @@ def _token_from_header(authorization: str | None) -> str:
 
 def current_user(authorization: str | None = Header(default=None)) -> dict:
     token = _token_from_header(authorization)
-    user_id = store.data["tokens"].get(_hash_token(token))
-    user = store.data["users"].get(user_id) if user_id else None
+    user_id = store.get_token_user_id(_hash_token(token))
+    user = store.get_user(user_id) if user_id else None
     if not user:
         raise HTTPException(401, "Your session has expired. Please sign in again.")
     return user

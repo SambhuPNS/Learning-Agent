@@ -55,7 +55,7 @@ def _slug(text: str) -> str:
 
 
 def all_topics() -> list[dict]:
-    return list(store.data["topics"].values())
+    return store.all_topics()
 
 
 def published_topics() -> list[dict]:
@@ -119,14 +119,12 @@ def create_topic(teacher: dict, data: dict) -> dict:
         "published": bool(data.get("published")),
         "lessons": normalise_lessons(data["lessons"], topic_id),
     }
-    with store.lock:
-        store.data["topics"][topic_id] = topic
-        store.save()
+    store.save_topic(topic)
     return topic
 
 
 def _owned_topic(teacher: dict, topic_id: str) -> dict:
-    topic = store.data["topics"].get(topic_id)
+    topic = store.get_topic(topic_id)
     if not topic:
         raise HTTPException(404, "Topic not found.")
     if topic["createdBy"] not in (teacher["id"], "system"):
@@ -137,17 +135,16 @@ def _owned_topic(teacher: dict, topic_id: str) -> dict:
 def update_topic(teacher: dict, topic_id: str, data: dict) -> dict:
     topic = _owned_topic(teacher, topic_id)
     existing = {lesson["id"] for lesson in topic["lessons"]}
-    with store.lock:
-        topic.update(
-            subject=data["subject"].strip(),
-            title=data["title"].strip(),
-            gradeLevel=data["gradeLevel"],
-            description=data["description"].strip(),
-            published=bool(data.get("published")),
-            lessons=normalise_lessons(data["lessons"], topic_id, existing),
-            updatedAt=now_iso(),
-        )
-        store.save()
+    topic.update(
+        subject=data["subject"].strip(),
+        title=data["title"].strip(),
+        gradeLevel=data["gradeLevel"],
+        description=data["description"].strip(),
+        published=bool(data.get("published")),
+        lessons=normalise_lessons(data["lessons"], topic_id, existing),
+        updatedAt=now_iso(),
+    )
+    store.save_topic(topic)
     return topic
 
 
@@ -155,9 +152,7 @@ def delete_topic(teacher: dict, topic_id: str) -> None:
     topic = _owned_topic(teacher, topic_id)
     if topic["createdBy"] == "system":
         raise HTTPException(403, "Starter content can be unpublished but not deleted.")
-    with store.lock:
-        del store.data["topics"][topic_id]
-        store.save()
+    store.delete_topic(topic_id)
 
 
 async def draft_plan(subject: str, title: str, grade: int, description: str, file: dict | None) -> dict:
