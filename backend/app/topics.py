@@ -176,7 +176,7 @@ async def draft_plan(subject: str, title: str, grade: int, description: str, fil
             if file_part:
                 raise HTTPException(502, "Gemini could not read the PDF right now. Please try again.") from exc
     elif file_part:
-        raise HTTPException(503, "Reading PDFs needs Gemini. Paste the text instead, or add a Gemini key.")
+        raise HTTPException(503, "Reading PDFs needs Vertex AI. Paste the text instead, or configure a GCP project.")
     return _outline_plan(title, description + "\n" + file_text)
 
 

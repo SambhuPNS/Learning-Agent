@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 os.environ["FIRESTORE_ENABLED"] = "false"
-os.environ["GEMINI_API_KEY"] = ""
+os.environ["GOOGLE_CLOUD_PROJECT"] = ""
 os.environ["TEACHER_INVITE_CODE"] = ""
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 

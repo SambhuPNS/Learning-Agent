@@ -188,7 +188,7 @@ async def tutor_turn(body: TurnIn, user: dict = Depends(auth.current_student)) -
 @app.post("/api/speech/understand")
 async def understand(body: UnderstandIn, user: dict = Depends(auth.current_student)) -> dict:
     if not gemini_enabled():
-        raise HTTPException(503, "Gemini speech understanding is not configured.")
+        raise HTTPException(503, "Vertex AI speech understanding is not configured.")
     question = tutor.pending_question(user, body.lessonId)
     try:
         return await speech.understand_audio(body.audio, body.mimeType, question)
@@ -205,7 +205,7 @@ def interpret(body: InterpretIn, user: dict = Depends(auth.current_student)) -> 
 @app.post("/api/speech/synthesize")
 async def synthesize(body: SpeakIn, user: dict = Depends(auth.current_user)) -> Response:
     if not gemini_enabled():
-        raise HTTPException(503, "Gemini text-to-speech is not configured.")
+        raise HTTPException(503, "Vertex AI text-to-speech is not configured.")
     audio = speech.audio_cache.get(body.text)
     if audio is None:
         try:

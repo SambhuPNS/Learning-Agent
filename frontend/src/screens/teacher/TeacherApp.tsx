@@ -27,7 +27,7 @@ export function TeacherApp({ user, health, onSignOut, onAuthError }: { user: Use
           <button type="button" className={tab === 'students' ? 'active' : ''} onClick={() => setTab('students')}><Users size={17} /> Students</button>
         </nav>
         <p className={`engine-badge ${health?.gemini ? 'live' : ''}`}>
-          {health?.gemini ? `Gemini connected · ${health.model}` : 'Offline mode (no Gemini key)'}
+          {health?.gemini ? `Vertex AI · ${health.model}` : 'Offline mode (no GCP project configured)'}
         </p>
         <button type="button" className="signout" onClick={onSignOut}><LogOut size={16} /> Sign out</button>
       </aside>
