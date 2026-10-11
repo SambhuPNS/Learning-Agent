@@ -105,6 +105,7 @@ def test_json_and_fallback_preserve_request_schema(vertex, monkeypatch):
         assert body["systemInstruction"]["parts"] == [{"text": "System"}]
         assert body["generationConfig"]["responseJsonSchema"] == schema
         assert body["generationConfig"]["responseMimeType"] == "application/json"
+        assert body["safetySettings"] == gemini.SAFETY_SETTINGS
         if len(calls) == 1:
             return httpx.Response(429, json={"error": {"message": "Busy"}})
         return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": '{"answer":"ok"}'}]}}]})

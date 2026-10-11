@@ -24,6 +24,14 @@ from .config import (
 
 RETRYABLE = {429, 500, 502, 503, 504}
 COOLDOWN_SECONDS = 90
+# Learners are school students: block sexual content at the lowest level and other harms from medium.
+SAFETY_SETTINGS = [
+    {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_LOW_AND_ABOVE"},
+    {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+    {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+    {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+]
+SAFETY_FINISH_REASONS = {"SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST", "SPII"}
 log = logging.getLogger("tutor.vertex")
 _cooldown_until: dict[str, float] = {}
 _auth_lock = Lock()
@@ -31,6 +39,10 @@ _auth_lock = Lock()
 
 class GeminiError(RuntimeError):
     pass
+
+
+class GeminiSafetyBlock(GeminiError):
+    """Vertex AI's safety filters blocked the prompt or the reply."""
 
 
 @lru_cache(maxsize=1)
@@ -92,9 +104,14 @@ async def _generate_with_fallback(body: dict, timeout: float) -> dict:
 
 
 def _parts(data: dict) -> list[dict]:
+    block_reason = (data.get("promptFeedback") or {}).get("blockReason")
+    if block_reason:
+        raise GeminiSafetyBlock(f"Vertex AI blocked the prompt: {block_reason}")
     candidates = data.get("candidates") or []
     if not candidates:
         raise GeminiError(f"Gemini returned no candidates: {json.dumps(data)[:300]}")
+    if candidates[0].get("finishReason") in SAFETY_FINISH_REASONS:
+        raise GeminiSafetyBlock(f"Vertex AI blocked the reply: {candidates[0]['finishReason']}")
     return candidates[0].get("content", {}).get("parts", [])
 
 
@@ -104,6 +121,7 @@ async def generate_json(system: str, parts: list[dict], schema: dict, timeout: f
         "contents": [{"role": "user", "parts": parts}],
         "generationConfig": {"responseMimeType": "application/json", "responseJsonSchema": schema,
                              "thinkingConfig": {"thinkingLevel": thinking}},
+        "safetySettings": SAFETY_SETTINGS,
     }
     data = await _generate_with_fallback(body, timeout)
     text = "".join(part.get("text", "") for part in _parts(data) if not part.get("thought"))

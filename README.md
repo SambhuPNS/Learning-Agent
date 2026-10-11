@@ -48,6 +48,16 @@ The client ID is public, not a secret: teammates can reuse it to sign in locally
 
 On first sign-in, users choose Student or Teacher, plus the invite code when `TEACHER_INVITE_CODE` is set; later sign-ins keep the original role. Accounts created earlier with a password are matched by their verified Google email, so their progress is kept.
 
+## Guardrails
+
+Learners are school students who can type anything, so the tutor is protected in layers:
+
+- **Answers stay on the server.** The answer key reaches Gemini only after the student has submitted an answer; hint, question and "explain again" turns never include it, and Gemini cannot change the waiting question.
+- **Grading cannot be argued with.** Answers are marked by deterministic rules against the answers fixed when the question was written; Gemini's opinion never changes the result.
+- **Student text is data, not instructions.** It is escaped and wrapped in `<student>` tags, and the system prompt tells Gemini to ignore instructions inside it.
+- **A second check before anything is shown.** When a question is still open after a student message, hint or re-explanation, a second Gemini call checks that the reply does not give the answer away. If it does, or the check fails, the student gets a hint instead.
+- **Vertex AI safety filters** block sexual content at the lowest threshold and harassment, hate and dangerous content from medium. A blocked student message gets a calm redirect and is removed from the lesson history sent to Gemini.
+
 ## Cloud Run deployment
 
 Use a GCP project with billing enabled. Enable Cloud Run, Cloud Build, Artifact Registry, Firestore, Secret Manager, and Vertex AI (`aiplatform.googleapis.com`) APIs. Create a **Firestore Native mode `(default)` database** in the desired location; the application does not select a named database. Set `GOOGLE_CLOUD_PROJECT` to that project's ID and `FIRESTORE_ENABLED=true`. Do not use local JSON storage in production: Cloud Run's writable filesystem is temporary.
