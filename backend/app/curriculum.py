@@ -43,6 +43,41 @@ def _visual(kind, fractions, caption):
     }
 
 
+def _text(text):
+    return {"type": "text", "text": text}
+
+
+def _callout(label, text):
+    return {"type": "callout", "caption": label, "text": text}
+
+
+def _flow(caption, steps):
+    return {"type": "flow", "caption": caption, "items": [{"label": label, "detail": detail} for label, detail in steps]}
+
+
+def _bar_chart(caption, bars, y_label):
+    return {"type": "bar-chart", "caption": caption, "data": [{"label": label, "value": value} for label, value in bars],
+            "yLabel": y_label}
+
+
+def _line_graph(caption, points, x_label, y_label):
+    return {"type": "line-graph", "caption": caption, "points": [{"x": x, "y": y} for x, y in points],
+            "xLabel": x_label, "yLabel": y_label}
+
+
+def _table(caption, columns, rows):
+    return {"type": "table", "caption": caption, "columns": columns, "rows": rows}
+
+
+def _rich_teach(title, blocks, speech):
+    """A teach step made of ordered blocks, in the same format Gemini returns."""
+    visuals = [block for block in blocks if block["type"] not in ("text", "callout")]
+    return {"kind": "teach", "title": title, "blocks": blocks,
+            "paragraphs": [block["text"] for block in blocks if block["type"] in ("text", "callout")],
+            "speech": speech, "visual": visuals[0] if visuals else None,
+            "strategy": "visual" if visuals else "step-by-step"}
+
+
 LESSONS = {
     "fraction-basics": {
         "id": "fraction-basics",
@@ -68,15 +103,19 @@ LESSONS = {
             ],
         },
         "script": [
-            _teach(
+            _rich_teach(
                 "A fraction names part of a whole",
                 [
-                    "A fraction tells us about equal parts of one whole thing, like a pizza or a chocolate bar.",
-                    "The bottom number is the denominator. It tells us how many equal parts the whole is cut into.",
-                    "The top number is the numerator. It tells us how many of those parts we are talking about. In 3/4, the pizza is cut into 4 equal slices and we have 3 of them.",
+                    _text("A fraction tells us about equal parts of one whole thing, like a pizza or a chocolate bar."),
+                    _visual("fraction-circles", [(3, 4)], "3 of 4 equal slices are shaded"),
+                    _text("In 3/4, the pizza is cut into 4 equal slices and we have 3 of them. Each number in a fraction has its own job."),
+                    _table("The two numbers in 3/4", ["Number", "Name", "What it tells us"], [
+                        ["3 (top)", "Numerator", "How many of the parts we have"],
+                        ["4 (bottom)", "Denominator", "How many equal parts make the whole"],
+                    ]),
+                    _callout("Remember", "Bottom: how many equal parts. Top: how many of them we have."),
                 ],
                 "A fraction tells us about equal parts of one whole. The bottom number, the denominator, says how many equal parts the whole is cut into. The top number, the numerator, says how many of those parts we have. So three quarters means four equal slices, and we have three of them.",
-                _visual("fraction-circles", [(3, 4)], "3 of 4 equal slices are shaded"),
             ),
             _teach(
                 "The parts must be equal",
@@ -167,15 +206,18 @@ LESSONS = {
                 "Look at these three bars. The same amount is shaded in each one. One half, two quarters and four eighths all show exactly half. We call these equivalent fractions.",
                 _visual("fraction-bars", [(1, 2), (2, 4), (4, 8)], "Each bar shows the same amount"),
             ),
-            _teach(
+            _rich_teach(
                 "How to make an equivalent fraction",
                 [
-                    "To make an equivalent fraction, multiply the top and bottom by the same number.",
-                    "For 2/3, multiply both by 2: 2 x 2 = 4 and 3 x 2 = 6. So 2/3 = 4/6.",
-                    "Cutting every slice into 2 smaller slices doubles both numbers, but the amount stays the same.",
+                    _text("To make an equivalent fraction, multiply the top and bottom by the same number."),
+                    _text("For 2/3, multiply both by 2: 2 x 2 = 4 and 3 x 2 = 6. So 2/3 = 4/6."),
+                    _visual("fraction-circles", [(2, 3), (4, 6)], "2/3 and 4/6 cover the same amount"),
+                    _text("Cutting every slice into 2 smaller slices doubles both numbers, but the amount stays the same. You can keep going:"),
+                    _table("Equivalent fractions of 2/3", ["Multiply top and bottom by", "Equivalent fraction"],
+                           [["2", "4/6"], ["3", "6/9"], ["4", "8/12"]]),
+                    _callout("Rule", "Whatever you do to the top, do the same to the bottom."),
                 ],
-                "To make an equivalent fraction, multiply the top and the bottom by the same number. Two thirds times two over two gives four sixths. Every slice is cut in half, so both numbers double, but the amount stays the same.",
-                _visual("fraction-circles", [(2, 3), (4, 6)], "2/3 and 4/6 cover the same amount"),
+                "To make an equivalent fraction, multiply the top and the bottom by the same number. Two thirds times two over two gives four sixths. Every slice is cut in half, so both numbers double, but the amount stays the same. Six ninths and eight twelfths are equal to two thirds too.",
             ),
             _question(
                 "Fill the gap",
@@ -252,15 +294,18 @@ LESSONS = {
                 "If two fractions have the same denominator, their parts are the same size. So we just compare the top numbers. Three fifths is bigger than two fifths.",
                 _visual("fraction-bars", [(3, 5), (2, 5)], "Same-sized parts: 3 parts beat 2 parts"),
             ),
-            _teach(
+            _rich_teach(
                 "When the tops match",
                 [
-                    "Now look at 1/2 and 1/3. Both have one part shaded.",
-                    "A whole cut into 2 pieces has bigger pieces than a whole cut into 3. So 1/2 is bigger than 1/3.",
-                    "When the numerators match, the smaller denominator wins.",
+                    _text("Now look at 1/2 and 1/3. Both have one part shaded."),
+                    _visual("fraction-circles", [(1, 2), (1, 3)], "Fewer pieces means bigger pieces"),
+                    _text("A whole cut into 2 pieces has bigger pieces than a whole cut into 3. So 1/2 is bigger than 1/3."),
+                    _text("Here is the same idea with a 120 cm ribbon. The more equal pieces you cut, the shorter each piece gets."),
+                    _bar_chart("One piece of a 120 cm ribbon", [("1/2", 60), ("1/3", 40), ("1/5", 24), ("1/8", 15)],
+                               "Length of one piece (cm)"),
+                    _callout("Remember", "When the numerators match, the smaller denominator wins."),
                 ],
-                "Now look at one half and one third. A whole cut into two pieces has bigger pieces than a whole cut into three. So when the top numbers match, the smaller bottom number gives the bigger fraction.",
-                _visual("fraction-circles", [(1, 2), (1, 3)], "Fewer pieces means bigger pieces"),
+                "Now look at one half and one third. A whole cut into two pieces has bigger pieces than a whole cut into three. The chart shows a ribbon: the more pieces you cut, the shorter each one. So when the top numbers match, the smaller bottom number gives the bigger fraction.",
             ),
             _question(
                 "Your turn",
@@ -338,23 +383,32 @@ LESSONS = {
             ],
         },
         "script": [
-            _teach(
+            _rich_teach(
                 "Adding same-size parts",
                 [
-                    "When fractions have the same denominator, the parts are the same size.",
-                    "So we add the numerators and keep the denominator: 1/5 + 2/5 = 3/5.",
+                    _text("When fractions have the same denominator, the parts are the same size."),
+                    _text("So we add the numerators and keep the denominator: 1/5 + 2/5 = 3/5."),
+                    _visual("fraction-bars", [(1, 5), (2, 5), (3, 5)], "1/5 + 2/5 = 3/5"),
+                    _flow("Adding fractions with the same denominator", [
+                        ("Check", "Are the denominators the same?"),
+                        ("Add", "Add the numerators: 1 + 2 = 3"),
+                        ("Keep", "Keep the denominator, so the answer is 3/5"),
+                    ]),
+                    _callout("Watch out", "Never add the denominators. 1/5 + 2/5 is not 3/10."),
                 ],
-                "When fractions have the same denominator, the parts are the same size. So we add the top numbers and keep the bottom number. One fifth plus two fifths is three fifths.",
-                _visual("fraction-bars", [(1, 5), (2, 5), (3, 5)], "1/5 + 2/5 = 3/5"),
+                "When fractions have the same denominator, the parts are the same size. So we add the top numbers and keep the bottom number. One fifth plus two fifths is three fifths. Check the bottoms match, add the tops, and keep the bottom. Never add the bottom numbers.",
             ),
-            _teach(
+            _rich_teach(
                 "Why the bottom stays the same",
                 [
-                    "The denominator tells the size of each part. Adding more fifths still gives you fifths.",
-                    "Subtracting works the same way: 5/8 - 2/8 = 3/8.",
+                    _text("The denominator tells the size of each part. Adding more fifths still gives you fifths."),
+                    _text("Sam reads 1/8 of a book every day. Each day adds one more eighth, so the number of eighths grows while the bottom number stays 8."),
+                    _line_graph("Sam reads 1/8 of the book each day", [(0, 0), (1, 1), (2, 2), (3, 3), (4, 4)],
+                                "Day", "Eighths of the book read"),
+                    _text("Subtracting works the same way: 5/8 - 2/8 = 3/8."),
+                    _visual("fraction-circles", [(5, 8), (3, 8)], "5/8 take away 2/8 leaves 3/8"),
                 ],
-                "The bottom number tells the size of each part. Adding more fifths still gives you fifths. Subtracting works the same way: five eighths take away two eighths is three eighths.",
-                _visual("fraction-circles", [(5, 8), (3, 8)], "5/8 take away 2/8 leaves 3/8"),
+                "The bottom number tells the size of each part. Adding more fifths still gives you fifths. If Sam reads one eighth of a book every day, the eighths add up one at a time, but they are always eighths. Subtracting works the same way: five eighths take away two eighths is three eighths.",
             ),
             _question(
                 "Your turn",

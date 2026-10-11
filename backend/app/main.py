@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
 from . import auth, gemini, speech, student_model, topics, tutor
-from .config import GEMINI_MODEL, GEMINI_TTS_MODEL, TEACHER_INVITE_CODE, gemini_enabled
+from .config import GEMINI_MODEL, GEMINI_TTS_MODEL, GOOGLE_CLIENT_ID, TEACHER_INVITE_CODE, gemini_enabled
 from .store import store
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -40,6 +40,12 @@ class SignupIn(BaseModel):
 class LoginIn(BaseModel):
     email: str = Field(max_length=120)
     password: str = Field(max_length=128)
+
+
+class GoogleIn(BaseModel):
+    credential: str = Field(min_length=1, max_length=8192)
+    role: Literal["student", "teacher"] = "student"
+    inviteCode: str = Field(default="", max_length=64)
 
 
 class ProfileIn(BaseModel):
@@ -120,7 +126,8 @@ class DraftIn(BaseModel):
 @app.get("/api/health")
 def health() -> dict:
     return {"status": "ok", "gemini": gemini_enabled(), "model": GEMINI_MODEL if gemini_enabled() else None,
-            "ttsModel": GEMINI_TTS_MODEL if gemini_enabled() else None, "teacherInviteRequired": bool(TEACHER_INVITE_CODE)}
+            "ttsModel": GEMINI_TTS_MODEL if gemini_enabled() else None, "teacherInviteRequired": bool(TEACHER_INVITE_CODE),
+            "googleClientId": GOOGLE_CLIENT_ID or None}
 
 
 # ---------- Accounts ----------
@@ -134,6 +141,12 @@ def signup(body: SignupIn) -> dict:
 @app.post("/api/auth/login")
 def login(body: LoginIn) -> dict:
     token, user = auth.login(body.email, body.password)
+    return {"token": token, "user": auth.public_user(user)}
+
+
+@app.post("/api/auth/google")
+def google_sign_in(body: GoogleIn) -> dict:
+    token, user = auth.google_sign_in(body.credential, body.role, body.inviteCode)
     return {"token": token, "user": auth.public_user(user)}
 
 

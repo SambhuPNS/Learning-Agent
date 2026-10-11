@@ -72,6 +72,8 @@ export const api = {
   signup: (name: string, email: string, password: string, role: Role, inviteCode: string) =>
     json<{ token: string; user: User }>('/auth/signup', post({ name, email, password, role, inviteCode })),
   login: (email: string, password: string) => json<{ token: string; user: User }>('/auth/login', post({ email, password })),
+  googleSignIn: (credential: string, role: Role, inviteCode: string) =>
+    json<{ token: string; user: User }>('/auth/google', post({ credential, role, inviteCode })),
   logout: () => json<{ ok: boolean }>('/auth/logout', { method: 'POST' }),
   me: () => json<User>('/me'),
   saveProfile: (profile: Profile) => json<User>('/profile', { method: 'PUT', body: JSON.stringify(profile) }),

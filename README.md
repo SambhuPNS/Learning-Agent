@@ -34,6 +34,30 @@ npm run dev
 
 The Vite development server proxies `/api` to port 8000. Production uses the same container for frontend and API, so a separate frontend host or CORS configuration is unnecessary. Frontend navigation currently uses application state; add an API-safe SPA fallback if URL-based routes are introduced.
 
+## Google sign-in
+
+Without `GOOGLE_CLIENT_ID`, the app uses local email/password accounts, so it runs with no Google setup. Once it is set, students and teachers sign in only with Google: password sign-up and sign-in are turned off, and the backend checks each Google ID token's signature, audience, expiry, and verified email.
+
+One-time setup in the Google Cloud Console (any project, for example the Vertex AI one):
+
+1. Open **Google Auth Platform** (APIs & Services → OAuth consent screen). Enter an app name and support email and choose the **External** audience. While the app is in *Testing*, only Google accounts added as test users can sign in; publish it to allow anyone. Basic sign-in (name and email) needs no Google review.
+2. Under **Clients**, create an OAuth client of type **Web application**. Add `http://localhost`, `http://localhost:5173`, and, once deployed, your Cloud Run URL as **Authorized JavaScript origins**. No redirect URIs are needed.
+3. Put the client ID in `backend/.env` as `GOOGLE_CLIENT_ID=….apps.googleusercontent.com` and restart the backend. The frontend reads it from `/api/health`, so it needs no configuration or rebuild.
+
+The client ID is public, not a secret: teammates can reuse it to sign in locally without their own setup. Open the app at exactly `http://localhost:5173`; Google rejects unregistered origins such as `127.0.0.1`.
+
+On first sign-in, users choose Student or Teacher, plus the invite code when `TEACHER_INVITE_CODE` is set; later sign-ins keep the original role. Accounts created earlier with a password are matched by their verified Google email, so their progress is kept.
+
+## Guardrails
+
+Learners are school students who can type anything, so the tutor is protected in layers:
+
+- **Answers stay on the server.** The answer key reaches Gemini only after the student has submitted an answer; hint, question and "explain again" turns never include it, and Gemini cannot change the waiting question.
+- **Grading cannot be argued with.** Answers are marked by deterministic rules against the answers fixed when the question was written; Gemini's opinion never changes the result.
+- **Student text is data, not instructions.** It is escaped and wrapped in `<student>` tags, and the system prompt tells Gemini to ignore instructions inside it.
+- **A second check before anything is shown.** When a question is still open after a student message, hint or re-explanation, a second Gemini call checks that the reply does not give the answer away. If it does, or the check fails, the student gets a hint instead.
+- **Vertex AI safety filters** block sexual content at the lowest threshold and harassment, hate and dangerous content from medium. A blocked student message gets a calm redirect and is removed from the lesson history sent to Gemini.
+
 ## Cloud Run deployment
 
 Use a GCP project with billing enabled. Enable Cloud Run, Cloud Build, Artifact Registry, Firestore, Secret Manager, and Vertex AI (`aiplatform.googleapis.com`) APIs. Create a **Firestore Native mode `(default)` database** in the desired location; the application does not select a named database. Set `GOOGLE_CLOUD_PROJECT` to that project's ID and `FIRESTORE_ENABLED=true`. Do not use local JSON storage in production: Cloud Run's writable filesystem is temporary.
@@ -55,6 +79,7 @@ PROJECT_ID=YOUR_PROJECT_ID
 REGION=YOUR_REGION
 REPOSITORY=YOUR_ARTIFACT_REPOSITORY
 RUNTIME_SERVICE_ACCOUNT=YOUR_RUNTIME_SERVICE_ACCOUNT_EMAIL
+GOOGLE_CLIENT_ID=YOUR_OAUTH_CLIENT_ID
 IMAGE="$REGION-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/brightpath:DEPLOYMENT_TAG"
 
 gcloud builds submit --project "$PROJECT_ID" --tag "$IMAGE" .
@@ -63,12 +88,12 @@ gcloud run deploy brightpath \
   --region "$REGION" \
   --image "$IMAGE" \
   --service-account "$RUNTIME_SERVICE_ACCOUNT" \
-  --set-env-vars "FIRESTORE_ENABLED=true,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,VERTEX_AI_LOCATION=global" \
+  --set-env-vars "FIRESTORE_ENABLED=true,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,VERTEX_AI_LOCATION=global,GOOGLE_CLIENT_ID=$GOOGLE_CLIENT_ID" \
   --set-secrets "TEACHER_INVITE_CODE=teacher-invite-code:latest" \
   --allow-unauthenticated
 ```
 
-Use a unique deployment tag. Verify the Gemini text/fallback/TTS model IDs and voice are available through Vertex AI in your project/location; configure them as backend environment variables when necessary. Public Cloud Run invocation allows the browser to reach the login page; protected API endpoints still require application authentication. Choose service memory, timeouts, concurrency, and maximum instances for your workload and budget.
+Add the deployed service URL to the OAuth client's **Authorized JavaScript origins** (see [Google sign-in](#google-sign-in)). Use a unique deployment tag. Verify the Gemini text/fallback/TTS model IDs and voice are available through Vertex AI in your project/location; configure them as backend environment variables when necessary. Public Cloud Run invocation allows the browser to reach the login page; protected API endpoints still require application authentication. Choose service memory, timeouts, concurrency, and maximum instances for your workload and budget.
 
 The container listens on `0.0.0.0:$PORT` (default 8080). Verify `/`, frontend assets, `/api/health`, signup/login, a lesson, voice, and teacher dashboards after deploying. Check that learning state survives a new container revision.
 

@@ -1,9 +1,14 @@
 import { useState, type FormEvent } from 'react'
 import { BookOpenCheck, GraduationCap, LoaderCircle, School } from 'lucide-react'
 import { api, tokenStore } from '../api'
+import { GoogleSignInButton } from '../components/GoogleSignInButton'
 import type { Role, User } from '../types'
 
-export function AuthScreen({ onAuthed, inviteRequired }: { onAuthed: (user: User) => void; inviteRequired: boolean }) {
+export function AuthScreen({ onAuthed, inviteRequired, googleClientId }: {
+  onAuthed: (user: User) => void
+  inviteRequired: boolean
+  googleClientId: string | null
+}) {
   const [mode, setMode] = useState<'signup' | 'login'>('signup')
   const [role, setRole] = useState<Role>('student')
   const [name, setName] = useState('')
@@ -13,12 +18,11 @@ export function AuthScreen({ onAuthed, inviteRequired }: { onAuthed: (user: User
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
-  const submit = async (event: FormEvent) => {
-    event.preventDefault()
+  const authenticate = async (attempt: () => Promise<{ token: string; user: User }>) => {
     setError(null)
     setBusy(true)
     try {
-      const result = mode === 'signup' ? await api.signup(name, email, password, role, inviteCode) : await api.login(email, password)
+      const result = await attempt()
       tokenStore.set(result.token)
       onAuthed(result.user)
     } catch (err) {
@@ -27,6 +31,26 @@ export function AuthScreen({ onAuthed, inviteRequired }: { onAuthed: (user: User
       setBusy(false)
     }
   }
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault()
+    await authenticate(() => (mode === 'signup' ? api.signup(name, email, password, role, inviteCode) : api.login(email, password)))
+  }
+
+  const continueWithGoogle = (credential: string) => {
+    if (!busy) authenticate(() => api.googleSignIn(credential, role, inviteCode))
+  }
+
+  const rolePicker = (
+    <div className="role-picker" role="radiogroup" aria-label="I am a">
+      <button type="button" role="radio" aria-checked={role === 'student'} className={role === 'student' ? 'active' : ''} onClick={() => setRole('student')}>
+        <BookOpenCheck size={18} /><strong>Student</strong><span>Learn with my tutor</span>
+      </button>
+      <button type="button" role="radio" aria-checked={role === 'teacher'} className={role === 'teacher' ? 'active' : ''} onClick={() => setRole('teacher')}>
+        <School size={18} /><strong>Teacher</strong><span>Create topics, see insights</span>
+      </button>
+    </div>
+  )
 
   return (
     <div className="auth-page">
@@ -44,56 +68,64 @@ export function AuthScreen({ onAuthed, inviteRequired }: { onAuthed: (user: User
         </ul>
       </section>
 
-      <form className="auth-card" onSubmit={submit}>
-        <div className="segmented" role="tablist">
-          <button type="button" role="tab" aria-selected={mode === 'signup'} className={mode === 'signup' ? 'active' : ''} onClick={() => setMode('signup')}>Create account</button>
-          <button type="button" role="tab" aria-selected={mode === 'login'} className={mode === 'login' ? 'active' : ''} onClick={() => setMode('login')}>Sign in</button>
+      {googleClientId ? (
+        <div className="auth-card">
+          <h2>Welcome to brightpath</h2>
+          <p className="auth-note">New here? Choose student or teacher, then continue with Google. Already have an account? Just continue.</p>
+          {rolePicker}
+          {role === 'teacher' && inviteRequired && (
+            <label>
+              Teacher invite code (first sign-in only)
+              <input value={inviteCode} onChange={(e) => setInviteCode(e.target.value)} maxLength={64} autoComplete="off" />
+            </label>
+          )}
+          {error && <p className="form-error" role="alert">{error}</p>}
+          <GoogleSignInButton clientId={googleClientId} onCredential={continueWithGoogle} onError={setError} />
+          {busy && <p className="muted"><LoaderCircle className="spin" size={16} /> Signing you in…</p>}
         </div>
-        <h2>{mode === 'signup' ? 'Create your account' : 'Welcome back'}</h2>
-        {mode === 'signup' && (
-          <div className="role-picker" role="radiogroup" aria-label="I am a">
-            <button type="button" role="radio" aria-checked={role === 'student'} className={role === 'student' ? 'active' : ''} onClick={() => setRole('student')}>
-              <BookOpenCheck size={18} /><strong>Student</strong><span>Learn with my tutor</span>
-            </button>
-            <button type="button" role="radio" aria-checked={role === 'teacher'} className={role === 'teacher' ? 'active' : ''} onClick={() => setRole('teacher')}>
-              <School size={18} /><strong>Teacher</strong><span>Create topics, see insights</span>
-            </button>
+      ) : (
+        <form className="auth-card" onSubmit={submit}>
+          <div className="segmented" role="tablist">
+            <button type="button" role="tab" aria-selected={mode === 'signup'} className={mode === 'signup' ? 'active' : ''} onClick={() => setMode('signup')}>Create account</button>
+            <button type="button" role="tab" aria-selected={mode === 'login'} className={mode === 'login' ? 'active' : ''} onClick={() => setMode('login')}>Sign in</button>
           </div>
-        )}
-        {mode === 'signup' && (
+          <h2>{mode === 'signup' ? 'Create your account' : 'Welcome back'}</h2>
+          {mode === 'signup' && rolePicker}
+          {mode === 'signup' && (
+            <label>
+              Your name
+              <input value={name} onChange={(e) => setName(e.target.value)} required maxLength={60} autoComplete="name" placeholder="Maya Rao" />
+            </label>
+          )}
           <label>
-            Your name
-            <input value={name} onChange={(e) => setName(e.target.value)} required maxLength={60} autoComplete="name" placeholder="Maya Rao" />
+            Email
+            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete="email" placeholder="you@example.com" />
           </label>
-        )}
-        <label>
-          Email
-          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete="email" placeholder="you@example.com" />
-        </label>
-        <label>
-          Password
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-            minLength={mode === 'signup' ? 8 : 1}
-            autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
-            placeholder={mode === 'signup' ? 'At least 8 characters' : ''}
-          />
-        </label>
-        {mode === 'signup' && role === 'teacher' && inviteRequired && (
           <label>
-            Teacher invite code
-            <input value={inviteCode} onChange={(e) => setInviteCode(e.target.value)} required maxLength={64} autoComplete="off" />
+            Password
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              minLength={mode === 'signup' ? 8 : 1}
+              autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
+              placeholder={mode === 'signup' ? 'At least 8 characters' : ''}
+            />
           </label>
-        )}
-        {error && <p className="form-error" role="alert">{error}</p>}
-        <button className="primary-button wide" type="submit" disabled={busy}>
-          {busy && <LoaderCircle className="spin" size={17} />}
-          {mode === 'signup' ? `Create ${role} account` : 'Sign in'}
-        </button>
-      </form>
+          {mode === 'signup' && role === 'teacher' && inviteRequired && (
+            <label>
+              Teacher invite code
+              <input value={inviteCode} onChange={(e) => setInviteCode(e.target.value)} required maxLength={64} autoComplete="off" />
+            </label>
+          )}
+          {error && <p className="form-error" role="alert">{error}</p>}
+          <button className="primary-button wide" type="submit" disabled={busy}>
+            {busy && <LoaderCircle className="spin" size={17} />}
+            {mode === 'signup' ? `Create ${role} account` : 'Sign in'}
+          </button>
+        </form>
+      )}
     </div>
   )
 }

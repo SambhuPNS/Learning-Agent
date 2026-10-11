@@ -21,7 +21,7 @@ import { api } from '../api'
 import { FractionVisual } from '../components/FractionVisual'
 import { MasteryBar, StrategyBadge } from '../components/Insights'
 import { STRATEGY_LABEL } from '../labels'
-import type { Health, HistoryItem, Learner, LessonState, LessonSummary, TurnAction, TurnMeta, TurnResponse, TutorStep, Understanding, User } from '../types'
+import type { Health, HistoryItem, Learner, LessonContent, LessonState, LessonSummary, TurnAction, TurnMeta, TurnResponse, TutorStep, Understanding, User } from '../types'
 import { browserRecognitionAvailable, recognizeOnce, TutorVoice, UtteranceRecorder } from '../voice'
 
 type VoiceState = 'idle' | 'listening' | 'thinking'
@@ -34,6 +34,19 @@ const STUDENT_LABEL: Partial<Record<TurnAction, string>> = {
   explain_again: 'Can you explain that another way?',
 }
 const DIFFICULTY_LABEL = { foundation: 'Building foundations', core: 'On track', stretch: 'Ready for a challenge' }
+
+function ContentBlock({ block }: { block: LessonContent }) {
+  if (block.type === 'text') return <p>{block.text}</p>
+  if (block.type === 'callout') {
+    return (
+      <aside className="callout">
+        <Lightbulb size={18} />
+        <div><strong>{block.label}</strong><p>{block.text}</p></div>
+      </aside>
+    )
+  }
+  return <FractionVisual visual={block.visual} />
+}
 
 function StepCard({ step, active, speaking, onReplay }: { step: TutorStep; active: boolean; speaking: boolean; onReplay: () => void }) {
   return (
@@ -53,9 +66,7 @@ function StepCard({ step, active, speaking, onReplay }: { step: TutorStep; activ
         </div>
       )}
       <div className="step-body">
-        {step.content?.length ? step.content.map((block, index) => block.type === 'text'
-          ? <p key={index}>{block.text}</p>
-          : <FractionVisual key={index} visual={block.visual} />)
+        {step.content?.length ? step.content.map((block, index) => <ContentBlock key={index} block={block} />)
           : <>
               {step.paragraphs.map((paragraph, index) => <p key={index}>{paragraph}</p>)}
               {step.visual && <FractionVisual visual={step.visual} />}

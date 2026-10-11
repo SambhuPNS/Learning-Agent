@@ -20,7 +20,7 @@ STRATEGY_LABELS = {
     "practice": "Worked examples & practice",
 }
 STRATEGY_GUIDES = {
-    "visual": "Lead with a visual (fill the visual field) and tell the student exactly what to look at in it.",
+    "visual": "Lead with a diagram, chart or table block and tell the student exactly what to look at in it.",
     "step-by-step": "Explain as short numbered steps in order, one operation or idea per step.",
     "real-world": "Explain through a short, concrete story or example from the student's interests.",
     "practice": "Give a very brief explanation, then a fully worked example the student can copy.",

@@ -37,12 +37,21 @@ export type Subject = { id: string; title: string; topics: Topic[] }
 
 export type VisualFraction = { numerator: number; denominator: number; label: string }
 export type Visual = {
-  type: 'fraction-circles' | 'fraction-bars' | 'number-line' | 'flow' | 'comparison'
+  type: 'fraction-circles' | 'fraction-bars' | 'number-line' | 'flow' | 'comparison' | 'bar-chart' | 'line-graph' | 'table'
   fractions: VisualFraction[]
   items?: { label: string; detail: string }[]
+  data?: { label: string; value: number }[]
+  points?: { x: number; y: number }[]
+  xLabel?: string
+  yLabel?: string
+  columns?: string[]
+  rows?: string[][]
   caption: string
 }
-export type LessonContent = { type: 'text'; text: string } | { type: 'visual'; visual: Visual }
+export type LessonContent =
+  | { type: 'text'; text: string }
+  | { type: 'callout'; label: string; text: string }
+  | { type: 'visual'; visual: Visual }
 
 export type Question = { prompt: string; format: 'choice' | 'text'; options: string[] }
 
@@ -93,7 +102,7 @@ export type TurnResponse = { history: HistoryItem[]; state: LessonState; learner
 export type SpeechIntent = 'answer' | 'hint' | 'explain_again' | 'continue' | 'ask' | 'unclear'
 export type Understanding = { transcript: string; intent: SpeechIntent; answer: string; question: string }
 
-export type Health = { status: string; gemini: boolean; model: string | null; ttsModel: string | null; teacherInviteRequired: boolean }
+export type Health = { status: string; gemini: boolean; model: string | null; ttsModel: string | null; teacherInviteRequired: boolean; googleClientId: string | null }
 
 export type StrategyStat = {
   strategy: Strategy

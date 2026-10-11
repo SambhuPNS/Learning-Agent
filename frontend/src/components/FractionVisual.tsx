@@ -1,4 +1,5 @@
 import type { Visual, VisualFraction } from '../types'
+import { BarChart, DataTable, LineGraph } from './DataVisuals'
 
 const COLORS = ['#7c5cf0', '#1677f2', '#14a37a', '#f08a24']
 
@@ -106,6 +107,9 @@ function NumberLine({ fractions }: { fractions: VisualFraction[] }) {
 }
 
 export function FractionVisual({ visual }: { visual: Visual }) {
+  if (visual.type === 'bar-chart') return <BarChart visual={visual} />
+  if (visual.type === 'line-graph') return <LineGraph visual={visual} />
+  if (visual.type === 'table') return <DataTable visual={visual} />
   const items = visual.items ?? []
   if (visual.type === 'flow' || visual.type === 'comparison') {
     return (

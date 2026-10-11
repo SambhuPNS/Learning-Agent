@@ -7,7 +7,7 @@ React + TypeScript client for the personalised AI tutor. It talks only to the Py
 Start the backend first (from `../backend`):
 
 ```bash
-cp .env.example .env              # paste GEMINI_API_KEY to enable Gemini; leave empty for the scripted mock tutor
+cp .env.example .env              # set GOOGLE_CLOUD_PROJECT to use Gemini on Vertex AI; leave empty for the scripted mock tutor
 uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -r requirements.txt
 .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
@@ -38,17 +38,21 @@ Every turn is logged with a timestamp, response time and input mode. The backend
 {
   "kind": "teach | question | feedback | summary",
   "title": "When the tops match",
+  "content": [
+    { "type": "text", "text": "..." },
+    { "type": "visual", "visual": { "type": "bar-chart", "caption": "...", "fractions": [], "data": [{ "label": "1/2", "value": 60 }], "yLabel": "cm" } },
+    { "type": "callout", "label": "Remember", "text": "..." }
+  ],
   "paragraphs": ["..."],
   "speech": "Spoken version of the step",
-  "visual": { "type": "fraction-circles | fraction-bars | number-line", "fractions": [{ "numerator": 1, "denominator": 2, "label": "1/2" }], "caption": "..." },
   "feedback": { "correct": true, "message": "..." },
   "question": { "prompt": "...", "format": "choice | text", "options": ["1/4", "1/6"] }
 }
 ```
 
-Correct answers stay on the server.
+`content` is the ordered list of blocks to render: text, callout, or a visual (`fraction-circles`, `fraction-bars`, `number-line`, `flow`, `comparison`, `bar-chart`, `line-graph`, `table`). Older saved steps without `content` fall back to `paragraphs` and `visual`. Correct answers stay on the server.
 
 ## Voice
 
-- With a Gemini key: the mic records until you pause, sends 16 kHz WAV to `/api/speech/understand`, and Gemini returns the transcript plus the extracted intent and answer. Tutor speech uses Gemini TTS via `/api/speech/synthesize`.
-- Without a key: browser speech recognition plus rule-based extraction (`/api/speech/interpret`), and the best available local voice.
+- With Vertex AI configured: the mic records until you pause, sends 16 kHz WAV to `/api/speech/understand`, and Gemini returns the transcript plus the extracted intent and answer. Tutor speech uses Gemini TTS via `/api/speech/synthesize`.
+- Without it: browser speech recognition plus rule-based extraction (`/api/speech/interpret`), and the best available local voice.
