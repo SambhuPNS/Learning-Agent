@@ -93,7 +93,7 @@ export type TurnResponse = { history: HistoryItem[]; state: LessonState; learner
 export type SpeechIntent = 'answer' | 'hint' | 'explain_again' | 'continue' | 'ask' | 'unclear'
 export type Understanding = { transcript: string; intent: SpeechIntent; answer: string; question: string }
 
-export type Health = { status: string; gemini: boolean; model: string | null; ttsModel: string | null; teacherInviteRequired: boolean }
+export type Health = { status: string; gemini: boolean; model: string | null; ttsModel: string | null; teacherInviteRequired: boolean; googleClientId: string | null }
 
 export type StrategyStat = {
   strategy: Strategy

@@ -15,6 +15,8 @@ GEMINI_TTS_MODEL = os.getenv("GEMINI_TTS_MODEL", "gemini-3.8-flash-lite-tts").st
 GEMINI_TTS_VOICE = os.getenv("GEMINI_TTS_VOICE", "Achird").strip()
 # Empty means anyone may register as a teacher (fine for local demos).
 TEACHER_INVITE_CODE = os.getenv("TEACHER_INVITE_CODE", "").strip()
+# OAuth web client ID. When set, everyone signs in with Google and password accounts are disabled.
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "").strip()
 FIRESTORE_ENABLED = os.getenv("FIRESTORE_ENABLED", "").strip().lower() in {"1", "true", "yes"}
 GOOGLE_CLOUD_PROJECT = os.getenv("GOOGLE_CLOUD_PROJECT", "").strip()
 VERTEX_AI_LOCATION = os.getenv("VERTEX_AI_LOCATION", "global").strip()

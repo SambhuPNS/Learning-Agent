@@ -54,7 +54,8 @@ function App() {
     <div className="backend-banner"><TriangleAlert size={16} /> The tutor server is not reachable. Start the backend on port 8000 and reload.</div>
   )
 
-  if (view === 'loading') {
+  // /api/health decides between Google and password sign-in, so wait for it.
+  if (view === 'loading' || (!user && !health && !backendDown)) {
     return <div className="center-screen"><LoaderCircle className="spin" size={26} /></div>
   }
 
@@ -64,6 +65,7 @@ function App() {
         {banner}
         <AuthScreen
           inviteRequired={Boolean(health?.teacherInviteRequired)}
+          googleClientId={health?.googleClientId ?? null}
           onAuthed={(authed) => {
             setUser(authed)
             setView(landingView(authed))

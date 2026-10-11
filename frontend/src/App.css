@@ -78,6 +78,8 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .segmented { display: grid; grid-template-columns: 1fr 1fr; padding: 4px; background: #eef3f9; border-radius: 9px; }
 .segmented button { height: 36px; color: #5a6f8c; font-size: 13px; font-weight: 700; background: transparent; border: 0; border-radius: 7px; }
 .segmented button.active { color: var(--ink); background: #fff; box-shadow: 0 2px 6px rgba(20, 40, 80, 0.1); }
+.auth-note { color: var(--muted); font-size: 14px; line-height: 1.5; }
+.google-button { display: flex; justify-content: center; min-height: 44px; }
 
 /* Onboarding */
 .onboarding-page { display: grid; min-height: 100svh; padding: 40px 20px; place-items: center; background: var(--canvas); }

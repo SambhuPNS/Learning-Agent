@@ -6,6 +6,7 @@ import pytest
 
 os.environ["FIRESTORE_ENABLED"] = "false"
 os.environ["GOOGLE_CLOUD_PROJECT"] = ""
+os.environ["GOOGLE_CLIENT_ID"] = ""
 os.environ["TEACHER_INVITE_CODE"] = ""
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
