@@ -207,6 +207,32 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .point-label { font-size: 16px; font-weight: 800; }
 .visual figcaption { margin-top: 12px; color: var(--muted); font-size: 13px; text-align: center; }
 
+.callout { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; color: var(--amber); background: var(--amber-soft); border: 1px solid #f4e0b0; border-radius: 10px; }
+.callout svg { flex-shrink: 0; margin-top: 2px; }
+.callout strong { display: block; margin-bottom: 2px; font-size: 12px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; }
+.step-body .callout p { color: #4a3a12; font-size: 15.5px; line-height: 1.5; }
+
+.bar-rows { display: grid; gap: 10px; }
+.bar-row { display: grid; grid-template-columns: fit-content(40%) minmax(0, 1fr) minmax(36px, auto); gap: 10px; align-items: center; }
+.bar-label { color: #34465f; font-size: 14px; font-weight: 700; text-align: right; overflow-wrap: anywhere; }
+.bar-track { position: relative; height: 22px; background: #eef3f9; border-radius: 6px; }
+.bar-fill { position: absolute; top: 0; bottom: 0; min-width: 2px; border-radius: 6px; }
+.bar-zero { position: absolute; top: -4px; bottom: -4px; width: 2px; background: #8da2bd; }
+.bar-value { color: var(--ink); font-size: 14px; font-weight: 800; }
+.chart-unit { margin-top: 10px; color: var(--muted); font-size: 12.5px; font-weight: 700; text-align: center; }
+.chart-svg { display: block; width: 100%; max-width: 560px; height: auto; margin: 0 auto; }
+.chart-grid { stroke: #e3eaf3; stroke-width: 1; }
+.chart-axis { stroke: #6f829c; stroke-width: 1.5; }
+.chart-line { fill: none; stroke: var(--violet); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+.chart-point { fill: var(--violet); stroke: #fff; stroke-width: 2; }
+.chart-tick { fill: #5b6f8b; font-size: 13px; }
+.chart-title { fill: #34465f; font-size: 13px; font-weight: 700; }
+.table-scroll { overflow-x: auto; }
+.data-table { width: 100%; font-size: 14.5px; border-collapse: collapse; }
+.data-table th { padding: 9px 12px; color: #fff; font-weight: 700; text-align: left; background: #2f4a6e; }
+.data-table td { padding: 9px 12px; color: #273a57; border-bottom: 1px solid #e6edf6; }
+.data-table tbody tr:nth-child(even) td { background: #f2f6fb; }
+
 .student-bubble { display: flex; justify-content: flex-end; }
 .student-bubble span { max-width: 75%; padding: 10px 15px; color: #fff; font-size: 15px; background: var(--blue); border-radius: 14px 14px 4px 14px; }
 .student-bubble.pending span { opacity: 0.6; }

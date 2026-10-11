@@ -4,7 +4,7 @@ from app import auth, store as store_module  # noqa: E402
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from app import student_model, tutor  # noqa: E402
+from app import blocks, curriculum, student_model, tutor  # noqa: E402
 from app.answers import interpret, matches  # noqa: E402
 from app.main import app  # noqa: E402
 
@@ -35,17 +35,41 @@ def test_answer_extraction():
     assert interpret("okay next", None)["intent"] == "continue"
 
 
-def test_lesson_content_preserves_text_and_multiple_visuals():
-    visual = {"type": "flow", "caption": "Steps", "fractions": [],
-              "items": [{"label": "First", "detail": "Do this"}]}
-    raw = {"kind": "teach", "paragraphs": ["Begin", "Then continue"],
-           "layout": ["text", "visual", "text", "visual", "visual"], "visuals": [visual, visual, visual]}
+def test_step_blocks_keep_order_and_drop_what_cannot_be_drawn():
+    flow = {"type": "flow", "caption": "Steps", "items": [{"label": "First", "detail": "Do this"}]}
+    raw = {"kind": "teach", "speech": "Let's look.", "blocks": [
+        {"type": "text", "text": "Begin"},
+        flow,
+        {"type": "bar-chart", "caption": "Votes", "yLabel": "Votes",
+         "data": [{"label": "Apples", "value": 4}, {"label": "Pears", "value": "2.5"}, {"label": "Bad", "value": "lots"}]},
+        {"type": "callout", "caption": "", "text": "Longer bars mean more votes."},
+        {"type": "table", "caption": "Halves", "columns": ["Fraction", "Equal to"], "rows": [["1/2", "2/4", "extra"], ["3/6"]]},
+        {"type": "line-graph", "caption": "Growth", "points": [{"x": 2, "y": 4}, {"x": 1, "y": 2}]},
+        {"type": "bar-chart", "caption": "Empty", "data": []},
+        {"type": "pie-chart", "caption": "Unknown component"},
+        flow,
+        {"type": "text", "text": "Then continue"},
+    ]}
     step, _, _ = tutor._clean_step(raw)
-    assert step["kind"] == "teach"
-    assert [block["type"] for block in step["content"]] == ["text", "visual", "text", "visual", "visual"]
-    assert step["content"][1]["visual"]["caption"] == "Steps"
-    assert step["paragraphs"] == ["Begin", "Then continue"]
+    assert [block["type"] for block in step["content"]] == ["text", "visual", "visual", "callout", "visual", "visual", "text"]
+    flow_step, bars, callout, table, graph = step["content"][1:6]
+    assert flow_step["visual"]["items"] == [{"label": "First", "detail": "Do this"}]
+    assert bars["visual"]["data"] == [{"label": "Apples", "value": 4.0}, {"label": "Pears", "value": 2.5}]
+    assert callout == {"type": "callout", "label": "Remember", "text": "Longer bars mean more votes."}
+    assert table["visual"]["rows"] == [["1/2", "2/4"], ["3/6", ""]]
+    assert [point["x"] for point in graph["visual"]["points"]] == [1, 2]
+    assert step["paragraphs"] == ["Begin", "Longer bars mean more votes.", "Then continue"]
     assert tutor._clean_step({**raw, "kind": "visual"})[0]["kind"] == "teach"
+    assert tutor._clean_step({"kind": "teach", "blocks": []})[0]["content"] == [{"type": "text", "text": "Let's keep going."}]
+
+
+def test_scripted_lesson_blocks_are_all_drawable():
+    rich = [item for lesson in curriculum.LESSONS.values() for item in lesson["script"] if item.get("blocks")]
+    assert rich
+    for item in rich:
+        assert len(blocks.to_content(item["blocks"])) == len(item["blocks"]), item["title"]
+    types = {block["type"] for item in rich for block in item["blocks"]}
+    assert {"text", "callout", "table", "bar-chart", "line-graph", "flow"} <= types
 
 
 def test_bkt_and_strategy_policy():
@@ -81,7 +105,8 @@ def test_student_flow_logs_events_and_updates_model():
     lesson = "comparing-fractions"
     first = turn(headers, lesson, "start")["history"][-1]["step"]
     assert first["kind"] == "teach" and first["strategy"] == "visual"
-    turn(headers, lesson, "continue", meta={"responseMs": 9000})
+    second = turn(headers, lesson, "continue", meta={"responseMs": 9000})["history"][-1]["step"]
+    assert {"bar-chart", "fraction-circles"} <= {block["visual"]["type"] for block in second["content"] if block["type"] == "visual"}
     step = turn(headers, lesson, "continue")["history"][-1]["step"]
     assert step["kind"] == "question" and "expectedAnswer" not in step["question"]
 

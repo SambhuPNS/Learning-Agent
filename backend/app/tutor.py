@@ -11,7 +11,7 @@ import uuid
 
 from fastapi import HTTPException
 
-from . import answers, gemini, student_model, topics
+from . import answers, blocks, gemini, student_model, topics
 from .config import gemini_enabled
 from .store import ConcurrentUpdateError, bounded_session, store
 
@@ -25,17 +25,6 @@ ACTION_LABELS = {
     "hint": "Can I have a hint?",
     "explain_again": "Can you explain that another way?",
 }
-VISUAL_TYPES = ["fraction-circles", "fraction-bars", "number-line", "flow", "comparison"]
-
-FRACTION_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "numerator": {"type": "integer", "minimum": 0, "maximum": 24},
-        "denominator": {"type": "integer", "minimum": 1, "maximum": 12},
-        "label": {"type": "string"},
-    },
-    "required": ["numerator", "denominator", "label"],
-}
 
 STEP_SCHEMA = {
     "type": "object",
@@ -44,28 +33,14 @@ STEP_SCHEMA = {
         "title": {"type": "string", "description": "Short heading, at most 6 words."},
         "strategy": {"type": "string", "enum": student_model.STRATEGIES + ["none"],
                      "description": "The teaching strategy used for the explanation in this step, or none for a bare question."},
-        "paragraphs": {
-            "type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 4,
-            "description": "What appears on screen. Short, friendly sentences. Use digits like 3/4 for fractions.",
+        "blocks": {
+            "type": "array", "items": blocks.BLOCK_SCHEMA, "minItems": 1, "maxItems": blocks.MAX_BLOCKS,
+            "description": "What appears on screen, in display order: short, friendly text blocks plus any diagrams, charts, "
+                           "tables or callouts that help. Use digits like 3/4 for fractions.",
         },
-        "layout": {"type": "array", "items": {"type": "string", "enum": ["text", "visual"]}, "maxItems": 7,
-                   "description": "Display order. Each text uses the next paragraph; each visual uses the next diagram. Include every paragraph and diagram exactly once."},
         "speech": {
             "type": "string",
             "description": "What the tutor says aloud: the explanation plus the question if one is asked. Natural spoken English under 80 words. Write fractions and symbols as words.",
-        },
-        "visuals": {"type": "array", "maxItems": 3, "description": "Diagrams in the order used by layout; empty if none.",
-            "items": {"type": ["object", "null"], "properties": {
-                "type": {"type": "string", "enum": VISUAL_TYPES},
-                "caption": {"type": "string"},
-                "fractions": {"type": "array", "items": FRACTION_SCHEMA, "maxItems": 4},
-                "items": {
-                    "type": "array", "maxItems": 6,
-                    "items": {"type": "object", "properties": {"label": {"type": "string"}, "detail": {"type": "string"}},
-                              "required": ["label", "detail"]},
-                },
-            },
-            "required": ["type", "caption", "fractions", "items"]},
         },
         "feedback": {
             "type": ["object", "null"],
@@ -89,22 +64,27 @@ STEP_SCHEMA = {
             "required": ["prompt", "format", "options", "expectedAnswer", "acceptableAnswers", "hint"],
         },
     },
-    "required": ["kind", "title", "strategy", "paragraphs", "layout", "speech", "visuals", "feedback", "question"],
+    "required": ["kind", "title", "strategy", "blocks", "speech", "feedback", "question"],
 }
 
 SYSTEM_PROMPT = """You are Brightpath, a warm, patient one-to-one tutor for school students. You can teach any subject.
 You teach one lesson step by step and return exactly one lesson step as JSON.
 
 Teaching rules:
-- Always TEACH before you test. Each new key idea gets a short 'teach' step (2-3 short paragraphs) before any question on it.
+- Always TEACH before you test. Each new key idea gets a short 'teach' step (2-3 short text blocks plus anything that helps) before any question on it.
 - Pattern: teach -> question -> feedback -> (teach next idea or another question) ... -> summary.
 - Ask one question at a time, answerable with a short answer or by choosing an option. Prefer multiple choice for younger students.
 - Never reveal the answer to a pending question unless the student has already answered it.
 - Follow the TEACHING STRATEGY you are given for any explanation, and report it in the 'strategy' field.
 - Adapt to the STUDENT MODEL: its evidence about mastery, misconceptions and behaviour is more reliable than the sign-up answers.
 - Use the student's interests in examples, and keep language right for their grade.
-- Visuals: fraction visuals only for fractions; number-line for numbers; flow for processes or ordered steps; comparison to contrast ideas. A visual must never give away the answer to the question on the same step.
-- Use layout to order the paragraphs and up to three useful visuals. Each 'text' displays the next paragraph, each 'visual' displays the next diagram. Include each exactly once; consecutive diagrams are fine. Keep speech consistent with the paragraphs.
+- Build each step from 'blocks', shown in the order you list them. Text blocks carry the explanation; add other blocks only when they make the idea clearer:
+  fraction-circles or fraction-bars only for fraction amounts; number-line for positions on a line; flow for steps in order; comparison to contrast 2-3 ideas;
+  bar-chart to compare amounts; line-graph for change or a relationship between two quantities; table for organised facts or patterns;
+  callout for one key rule, tip or example.
+- Most steps need 2-5 blocks with at most 2 diagrams, charts or tables (never more than 4). If the student asks for a chart, diagram, table or example, include one.
+- Every number in a chart, graph or table must be accurate. No block may give away the answer to the question in the same step.
+- Keep speech consistent with the blocks: describe what a diagram shows rather than reading out every number.
 - 'teach' and 'summary' steps have question = null. 'question' steps must include a question. 'feedback' has feedback set.
 - Stay within the topic. If the student asks something off-topic or inappropriate, kindly steer back to the lesson.
 """
@@ -167,6 +147,10 @@ def _transcript(session: dict) -> str:
         step = item["step"]
         style = f" [{step['strategy']}]" if step.get("strategy") else ""
         line = f"TUTOR [{step['kind']}]{style} {step['title']}: {' '.join(step['paragraphs'])}"
+        shown = [f"{block['visual']['type']} '{block['visual']['caption']}'"
+                 for block in step.get("content") or [] if block["type"] == "visual"]
+        if shown:
+            line += f" (showed {', '.join(shown)})"
         if step.get("feedback"):
             line += f" (feedback: {'correct' if step['feedback']['correct'] else 'incorrect'})"
         if step.get("question"):
@@ -199,7 +183,7 @@ def _instruction(action: str, text: str | None, session: dict, graded: bool | No
                 f"A deterministic check says the answer {verdict} the acceptable answers; trust it unless the answer is clearly an equivalent correct form. "
                 f"Return a 'feedback' step with feedback.correct and a specific, encouraging message. {follow_up}")
     if action == "hint":
-        return (f"The student asked for a hint on the pending question {pending_json}. Return a 'question' step with a helpful hint in the paragraphs "
+        return (f"The student asked for a hint on the pending question {pending_json}. Return a 'question' step with a helpful hint in its blocks "
                 "(do not reveal the answer) and repeat the SAME question with the same expectedAnswer.")
     repeat = f"Then repeat the pending question {pending_json} unchanged (kind 'question')." if pending else "Set question = null (kind 'teach')."
     if action == "explain_again":
@@ -244,22 +228,6 @@ def _prompt(user: dict, topic: dict, lesson: dict, session: dict, action: str, t
             f"YOUR TASK NOW:\n{_instruction(action, text, session, graded)}")
 
 
-def _clean_visual(visual: dict | None) -> dict | None:
-    if not visual or visual.get("type") not in VISUAL_TYPES:
-        return None
-    fractions = [
-        {"numerator": max(0, min(24, int(f["numerator"]))), "denominator": max(1, min(12, int(f["denominator"]))),
-         "label": str(f.get("label") or f"{f['numerator']}/{f['denominator']}")}
-        for f in (visual.get("fractions") or [])[:4]
-    ]
-    items = [{"label": str(i.get("label", ""))[:60], "detail": str(i.get("detail", ""))[:240]} for i in (visual.get("items") or [])[:6]]
-    uses_fractions = visual["type"] in ("fraction-circles", "fraction-bars", "number-line")
-    if (uses_fractions and not fractions) or (not uses_fractions and not items):
-        return None
-    return {"type": visual["type"], "caption": str(visual.get("caption", "")), "fractions": fractions if uses_fractions else [],
-            "items": [] if uses_fractions else items}
-
-
 def _clean_step(raw: dict) -> tuple[dict, dict | None, str | None]:
     question = raw.get("question")
     hidden = None
@@ -281,23 +249,14 @@ def _clean_step(raw: dict) -> tuple[dict, dict | None, str | None]:
     if kind == "question" and not hidden:
         kind = "teach"
     strategy = raw.get("strategy") if raw.get("strategy") in student_model.STRATEGIES else None
-    paragraphs = [str(p) for p in raw.get("paragraphs") or []][:4] or ["Let's keep going."]
-    visuals = [visual for item in (raw.get("visuals") or [])[:3] if (visual := _clean_visual(item))]
-    content = []
-    paragraph_index = visual_index = 0
-    for block_type in (raw.get("layout") or [])[:7] + ["text"] * len(paragraphs) + ["visual"] * len(visuals):
-        if block_type == "text" and paragraph_index < len(paragraphs):
-            content.append({"type": "text", "text": paragraphs[paragraph_index]})
-            paragraph_index += 1
-        elif block_type == "visual" and visual_index < len(visuals):
-            content.append({"type": "visual", "visual": visuals[visual_index]})
-            visual_index += 1
+    content = blocks.to_content(raw.get("blocks")) or [{"type": "text", "text": "Let's keep going."}]
+    paragraphs = blocks.texts(content) or ["Let's keep going."]
     step = {
         "kind": kind,
         "title": str(raw.get("title") or "Let's keep going"),
         "paragraphs": paragraphs,
-        "speech": str(raw.get("speech") or " ".join(raw.get("paragraphs") or [])),
-        "visual": _clean_visual(raw.get("visual")) or (visuals[0] if visuals else None),
+        "speech": str(raw.get("speech") or " ".join(paragraphs)),
+        "visual": None,
         "content": content,
         "feedback": {"correct": bool(feedback.get("correct")), "message": str(feedback.get("message", ""))} if feedback else None,
         "strategy": strategy,
@@ -307,6 +266,8 @@ def _clean_step(raw: dict) -> tuple[dict, dict | None, str | None]:
 
 def _render_script_item(item: dict) -> tuple[dict, dict | None]:
     step = {key: item.get(key) for key in ("kind", "title", "paragraphs", "speech", "visual")}
+    if item.get("blocks"):
+        step["content"] = blocks.to_content(item["blocks"])
     step["feedback"] = None
     step["strategy"] = item.get("strategy") if item["kind"] in ("teach", "summary") else None
     return step, item.get("question")
@@ -321,8 +282,11 @@ def _mock_step(user: dict, lesson: dict, session: dict, action: str, graded: boo
     if action == "start":
         session["mockIndex"] = 0
         step, hidden = _render_script_item(script[0])
-        step["paragraphs"] = [f"Hi {name}! Let's learn together."] + step["paragraphs"]
-        step["speech"] = f"Hi {name}! Let's learn together. {step['speech']}"
+        greeting = f"Hi {name}! Let's learn together."
+        step["paragraphs"] = [greeting] + step["paragraphs"]
+        if step.get("content"):
+            step["content"] = [{"type": "text", "text": greeting}] + step["content"]
+        step["speech"] = f"{greeting} {step['speech']}"
         return step, hidden
 
     if action == "continue":
