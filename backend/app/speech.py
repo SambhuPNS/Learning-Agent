@@ -18,7 +18,7 @@ UNDERSTAND_SCHEMA = {
     "required": ["transcript", "intent", "answer", "question"],
 }
 
-UNDERSTAND_SYSTEM = """You listen to a school student speaking to their maths tutor app.
+UNDERSTAND_SYSTEM = """You listen to a school student speaking to their tutor app.
 Transcribe exactly what they said, then work out what they want:
 - answer: they are answering the current question (even casually, e.g. "umm I think it's a half")
 - hint: they want a hint or are stuck

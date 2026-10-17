@@ -1,5 +1,10 @@
-"""Seed content: the Fractions topic is loaded into the topic store on first run, like any teacher-created topic.
-The hand-written `script` for each lesson is only used as an offline fallback when Gemini is unavailable."""
+"""Seed content: the Fractions topic and the other starter topics are loaded into the topic store, like any
+teacher-created topic, and any that are missing are added on start-up.
+The hand-written `script` for each Fractions lesson is only used as an offline fallback when Gemini is unavailable."""
+
+from copy import deepcopy
+
+from .starter_topics import STARTER_TOPICS
 
 SEED_TOPIC_ID = "fractions"
 
@@ -461,18 +466,20 @@ def seed_topics(created_at: str) -> list[dict]:
         {"id": lesson["id"], "title": lesson["title"], "summary": lesson["summary"], **lesson["context"]}
         for lesson in sorted(LESSONS.values(), key=lambda item: item["order"])
     ]
-    return [{
+    fractions = {
         "id": SEED_TOPIC_ID,
         "subject": "Mathematics",
         "title": "Fractions",
         "gradeLevel": 7,
         "description": "Understanding fractions as equal parts of a whole, equivalent fractions, comparing fractions and adding or subtracting fractions with the same denominator.",
-        "createdBy": "system",
-        "createdByName": "Elevate starter content",
-        "createdAt": created_at,
-        "published": True,
         "lessons": lessons,
-    }]
+    }
+    return [{**deepcopy(topic), "createdBy": "system", "createdByName": "Elevate starter content", "createdAt": created_at,
+             "published": True} for topic in [fractions, *STARTER_TOPICS]]
+
+
+# Starter topics come first on the student home screen, in this order; teacher topics follow.
+STARTER_ORDER = {topic["id"]: index for index, topic in enumerate(seed_topics(""))}
 
 
 SCRIPTS = {lesson_id: lesson["script"] for lesson_id, lesson in LESSONS.items()}

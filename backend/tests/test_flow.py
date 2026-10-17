@@ -161,8 +161,8 @@ def test_teacher_topics_and_insights():
                      "misconceptions": ["Plants get their food from the soil.", "Plants take in oxygen to make food."]}],
     }).json()
     lesson_id = topic["lessons"][0]["id"]
-    titles = [t["title"] for s in client.get("/api/curriculum", headers=student).json()["subjects"] for t in s["topics"]]
-    assert "Photosynthesis" in titles
+    topic_ids = [t["id"] for s in client.get("/api/curriculum", headers=student).json()["subjects"] for t in s["topics"]]
+    assert topic["id"] in topic_ids
 
     step = turn(student, lesson_id, "start")["history"][-1]["step"]
     assert step["kind"] == "teach"
@@ -182,8 +182,8 @@ def test_teacher_topics_and_insights():
 
     updated = {**{k: topic[k] for k in ("subject", "title", "gradeLevel", "description", "lessons")}, "published": False}
     assert client.put(f"/api/teacher/topics/{topic['id']}", headers=teacher, json=updated).status_code == 200
-    titles = [t["title"] for s in client.get("/api/curriculum", headers=student).json()["subjects"] for t in s["topics"]]
-    assert "Photosynthesis" not in titles
+    topic_ids = [t["id"] for s in client.get("/api/curriculum", headers=student).json()["subjects"] for t in s["topics"]]
+    assert topic["id"] not in topic_ids
     other = signup("other-teacher@example.com", role="teacher")
     assert client.delete(f"/api/teacher/topics/{topic['id']}", headers=other).status_code == 403
     assert client.delete(f"/api/teacher/topics/{topic['id']}", headers=teacher).status_code == 200

@@ -54,8 +54,9 @@ class JsonStore:
         for key in ("users", "tokens", "sessions", "studentModels"):
             data.setdefault(key, {})
         data.setdefault("events", [])
-        if not data.get("topics"):
-            data["topics"] = {topic["id"]: topic for topic in seed_topics(now_iso())}
+        topics = data.setdefault("topics", {})
+        for topic in seed_topics(now_iso()):
+            topics.setdefault(topic["id"], topic)
         for user in data["users"].values():
             user.setdefault("role", "student")
         return data
@@ -86,12 +87,13 @@ class FirestoreStore:
         return sha256(email.encode()).hexdigest()
 
     def _seed_topics(self) -> None:
-        if next(self.db.collection("topics").limit(1).stream(), None):
-            return
+        """Adds any starter topic that is missing; existing topics, including edited ones, are left alone."""
         from google.cloud import firestore
 
         topics = seed_topics(now_iso())
         refs = [self.db.collection("topics").document(topic["id"]) for topic in topics]
+        if all(snapshot.exists for snapshot in self.db.get_all(refs)):
+            return
 
         @firestore.transactional
         def seed(transaction):

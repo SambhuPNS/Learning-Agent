@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from . import auth, gemini, speech, student_model, topics, tutor
 from .config import GEMINI_MODEL, GEMINI_TTS_MODEL, GOOGLE_CLIENT_ID, TEACHER_INVITE_CODE, gemini_enabled
+from .curriculum import STARTER_ORDER
 from .store import store
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -174,7 +175,8 @@ def save_profile(body: ProfileIn, user: dict = Depends(auth.current_student)) ->
 def curriculum(user: dict = Depends(auth.current_user)) -> dict:
     progress = user.get("progress", {})
     subjects: dict[str, list[dict]] = defaultdict(list)
-    for topic in sorted(topics.published_topics(), key=lambda t: (t["subject"], t.get("gradeLevel", 0), t["title"])):
+    for topic in sorted(topics.published_topics(),
+                        key=lambda t: (STARTER_ORDER.get(t["id"], len(STARTER_ORDER)), t["subject"], t.get("gradeLevel", 0), t["title"])):
         lessons = [
             {"id": lesson["id"], "title": lesson["title"], "summary": lesson.get("summary", ""), "order": index + 1,
              "topicId": topic["id"], "topicTitle": topic["title"],
