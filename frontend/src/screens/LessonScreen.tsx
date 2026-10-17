@@ -19,7 +19,7 @@ import {
   VolumeX,
   XCircle,
 } from 'lucide-react'
-import { api } from '../api'
+import { api, ApiError } from '../api'
 import { FractionVisual } from '../components/FractionVisual'
 import { MasteryBar, StrategyBadge } from '../components/Insights'
 import { STRATEGY_LABEL } from '../labels'
@@ -28,6 +28,11 @@ import { browserRecognitionAvailable, recognizeOnce, TutorVoice, UtteranceRecord
 
 type VoiceState = 'idle' | 'listening' | 'thinking'
 type InputMode = NonNullable<TurnMeta['inputMode']>
+
+/** Give up on understanding a spoken reply after this long; the student can tap or speak again. */
+const UNDERSTAND_TIMEOUT_MS = 12_000
+/** In hands-free mode, reopen the mic this many times per step when nothing usable was heard. */
+const HANDS_FREE_RETRIES = 2
 
 const KIND_LABEL: Record<TutorStep['kind'], string> = { teach: 'Learn', question: 'Your turn', feedback: 'Feedback', summary: 'Summary' }
 const STUDENT_LABEL: Partial<Record<TurnAction, string>> = {
@@ -131,6 +136,10 @@ export function LessonScreen({
   )
   const recorderRef = useRef<UtteranceRecorder | null>(null)
   const stopRecognitionRef = useRef<(() => void) | null>(null)
+  const understandAbortRef = useRef<AbortController | null>(null)
+  // Bumped whenever a voice attempt starts or is abandoned, so a stale recording is never acted on.
+  const voiceAttemptRef = useRef(0)
+  const handsFreeRetriesRef = useRef(0)
   const listeningRef = useRef(false)
   const busyRef = useRef(false)
   const stateRef = useRef<LessonState | null>(null)
@@ -165,6 +174,7 @@ export function LessonScreen({
     return () => {
       aliveRef.current = false
       voice.stop()
+      understandAbortRef.current?.abort()
       recorderRef.current?.cancel()
       stopRecognitionRef.current?.()
       if (autoTimerRef.current !== null) window.clearTimeout(autoTimerRef.current)
@@ -197,14 +207,45 @@ export function LessonScreen({
     }, ms)
   }
 
+  /** Abandons a recording or speech understanding in progress, e.g. when the student taps an answer instead. */
+  const interruptVoice = () => {
+    voiceAttemptRef.current++
+    understandAbortRef.current?.abort()
+    understandAbortRef.current = null
+    recorderRef.current?.cancel()
+    recorderRef.current = null
+    stopRecognitionRef.current?.()
+    stopRecognitionRef.current = null
+    listeningRef.current = false
+    setVoiceState('idle')
+    setLevel(0)
+  }
+
   const updateDraft = (value: string) => {
     setDraft(value)
     draftRef.current = value
-    if (value) cancelAutoNext()
+    if (value) {
+      cancelAutoNext()
+      if (listeningRef.current || understandAbortRef.current) interruptVoice()
+    }
+  }
+
+  /** In hands-free mode the mic reopens by itself a couple of times; otherwise the student taps it. */
+  const retryListening = (message: string) => {
+    if (!handsFreeRef.current || handsFreeRetriesRef.current >= HANDS_FREE_RETRIES) {
+      setNotice(`${message} Tap the mic and try again.`)
+      return
+    }
+    handsFreeRetriesRef.current++
+    setNotice(`${message} Listening again…`)
+    window.setTimeout(() => {
+      if (aliveRef.current && !busyRef.current && !listeningRef.current) void listen()
+    }, 700)
   }
 
   const runTurn = async (action: TurnAction, text?: string, inputMode?: InputMode, responseMs?: number) => {
     if (busyRef.current || !aliveRef.current) return
+    if (inputMode !== 'voice') interruptVoice()
     cancelAutoNext()
     busyRef.current = true
     voice.stop()
@@ -231,6 +272,7 @@ export function LessonScreen({
     if (!aliveRef.current) return
     stateRef.current = response.state
     readyAtRef.current = performance.now()
+    handsFreeRetriesRef.current = 0
     setHistory(response.history)
     setLessonState(response.state)
     setLearner(response.learner)
@@ -265,14 +307,14 @@ export function LessonScreen({
         return runTurn('explain_again', understanding.transcript, 'voice', responseMs)
       case 'continue':
         if (stateRef.current?.awaitingAnswer) {
-          setNotice("Have a go at the question first. You can also say 'give me a hint'.")
+          retryListening("Have a go at the question first. You can also say 'give me a hint'.")
           return
         }
         return runTurn('continue', understanding.transcript, 'voice', responseMs)
       case 'ask':
         return runTurn('ask', understanding.question, 'voice', responseMs)
       default:
-        setNotice("Sorry, I didn't catch that. Tap the mic and try again.")
+        retryListening("Sorry, I didn't catch that.")
     }
   }
 
@@ -285,6 +327,8 @@ export function LessonScreen({
     if (busyRef.current || !canListen || !aliveRef.current) return
     cancelAutoNext()
     voice.stop()
+    const attempt = ++voiceAttemptRef.current
+    const current = () => aliveRef.current && attempt === voiceAttemptRef.current
     listeningRef.current = true
     const listenStartedAt = performance.now()
     const waitedMs = listenStartedAt - readyAtRef.current
@@ -299,46 +343,59 @@ export function LessonScreen({
         const recorder = new UtteranceRecorder()
         recorderRef.current = recorder
         const recording = await recorder.start(setLevel)
+        if (!current()) return
         recorderRef.current = null
         listeningRef.current = false
-        if (!aliveRef.current) return
         if (!recording) {
           setVoiceState('idle')
-          setNotice("I didn't hear anything. Tap the mic and try again.")
+          retryListening("I didn't hear anything.")
           return
         }
         responseMs = waitedMs + recording.speechStartMs
         setVoiceState('thinking')
-        understanding = await api.understand(lesson.id, recording.wavBase64)
+        const controller = new AbortController()
+        understandAbortRef.current = controller
+        const timer = window.setTimeout(() => controller.abort(), UNDERSTAND_TIMEOUT_MS)
+        try {
+          understanding = await api.understand(lesson.id, recording.wavBase64, controller.signal)
+        } finally {
+          window.clearTimeout(timer)
+          if (understandAbortRef.current === controller) understandAbortRef.current = null
+        }
       } else {
         const recognition = recognizeOnce()
         stopRecognitionRef.current = recognition.stop
         const transcript = await recognition.result
+        if (!current()) return
         stopRecognitionRef.current = null
         listeningRef.current = false
-        if (!aliveRef.current) return
         if (!transcript.trim()) {
           setVoiceState('idle')
-          setNotice("I didn't hear anything. Tap the mic and try again.")
+          retryListening("I didn't hear anything.")
           return
         }
         responseMs = performance.now() - readyAtRef.current
         setVoiceState('thinking')
         understanding = await api.interpret(lesson.id, transcript)
       }
-      if (!aliveRef.current) return
+      if (!current()) return
       setVoiceState('idle')
       setHeard(understanding)
       await route(understanding, responseMs)
     } catch (err) {
+      if (!current()) return
       listeningRef.current = false
       recorderRef.current = null
       setVoiceState('idle')
+      if ((err instanceof ApiError && err.status === 408) || (err as Error).name === 'AbortError') {
+        retryListening('That took too long to understand.')
+        return
+      }
       onAuthError(err)
       const message = (err as Error).message
       setError(/permission|NotAllowed/i.test(message) ? 'Microphone access was blocked. Allow it in the browser address bar and try again.' : message)
     } finally {
-      setLevel(0)
+      if (attempt === voiceAttemptRef.current) setLevel(0)
     }
   }
 
@@ -367,7 +424,8 @@ export function LessonScreen({
     setAutoContinue(!autoContinue)
   }
 
-  const disabled = busy || voiceState !== 'idle'
+  // Voice input never locks the dock: tapping or typing an answer simply replaces the voice attempt.
+  const disabled = busy
   const progressPercent = lessonState ? Math.min(100, Math.round((lessonState.correct / lessonState.target) * 100)) : 0
 
   return (
@@ -501,7 +559,7 @@ export function LessonScreen({
                   )}
                   <button type="button" className="chip-button blue" onClick={() => runTurn('explain_again', undefined, 'choice')} disabled={disabled || !lessonState}><RefreshCw size={15} /> Explain another way</button>
                   {question && (
-                    <button type="button" className="chip-button" onClick={() => setAskMode(!askMode)} disabled={disabled}>
+                    <button type="button" className="chip-button" onClick={() => { interruptVoice(); setAskMode(!askMode) }} disabled={disabled}>
                       <MessageCircleQuestion size={15} /> {askMode ? 'Back to answering' : 'Ask a question'}
                     </button>
                   )}

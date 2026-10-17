@@ -2,6 +2,11 @@ import { api } from './api'
 
 const TARGET_SAMPLE_RATE = 16000
 const VOICE_THRESHOLD = 0.018
+// The first moments set the room's noise level; speech must be clearly louder for a couple of frames.
+const CALIBRATION_MS = 300
+const LOUD_SPEECH = 0.08
+const NOISE_MARGIN = 2.5
+const SPEECH_FRAMES = 2
 const SILENCE_AFTER_SPEECH_MS = 1300
 const NO_SPEECH_TIMEOUT_MS = 8000
 const MAX_RECORDING_MS = 15000
@@ -70,6 +75,9 @@ export class UtteranceRecorder {
   private lastVoiceAt = 0
   private firstVoiceAt = 0
   private heardSpeech = false
+  private noiseLevels: number[] = []
+  private loudFrames = 0
+  private loudSince = 0
 
   async start(onLevel: (level: number) => void): Promise<Recording | null> {
     this.stream = await navigator.mediaDevices.getUserMedia({
@@ -95,10 +103,20 @@ export class UtteranceRecorder {
       onLevel(Math.min(1, rms * 9))
 
       const now = performance.now()
-      if (rms > VOICE_THRESHOLD) {
-        if (!this.heardSpeech) this.firstVoiceAt = now
-        this.heardSpeech = true
-        this.lastVoiceAt = now
+      const calibrating = now - this.startedAt < CALIBRATION_MS
+      if (calibrating && rms <= LOUD_SPEECH) this.noiseLevels.push(rms)
+      const noise = this.noiseLevels.length ? this.noiseLevels.reduce((total, value) => total + value, 0) / this.noiseLevels.length : 0
+      const threshold = calibrating ? LOUD_SPEECH : Math.max(VOICE_THRESHOLD, noise * NOISE_MARGIN)
+      if (rms > threshold) {
+        if (this.loudFrames === 0) this.loudSince = now
+        this.loudFrames++
+        if (this.heardSpeech || this.loudFrames >= SPEECH_FRAMES) {
+          if (!this.heardSpeech) this.firstVoiceAt = this.loudSince
+          this.heardSpeech = true
+          this.lastVoiceAt = now
+        }
+      } else {
+        this.loudFrames = 0
       }
       if (this.heardSpeech && now - this.lastVoiceAt > SILENCE_AFTER_SPEECH_MS) this.finish(true)
       else if (!this.heardSpeech && now - this.startedAt > NO_SPEECH_TIMEOUT_MS) this.finish(false)
