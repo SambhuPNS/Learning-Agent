@@ -21,6 +21,9 @@ log = logging.getLogger("tutor.engine")
 TARGET_CORRECT = 3
 ESTIMATED_STEPS = 8
 HISTORY_WINDOW = 16
+# The main model usually answers in 5-7 s; past this, the fast model is asked too and the first reply wins.
+BACKUP_AFTER_SECONDS = 8
+STEP_TIMEOUT_SECONDS = 25
 ACTION_LABELS = {
     "hint": "Can I have a hint?",
     "explain_again": "Can you explain that another way?",
@@ -367,7 +370,8 @@ async def _reveals_answer(step: dict, question: dict) -> bool:
         "tutorMessage": {"content": step.get("content") or [], "speech": step.get("speech", "")},
     }
     try:
-        verdict = await gemini.generate_json(LEAK_CHECK_SYSTEM, [{"text": json.dumps(check)}], LEAK_CHECK_SCHEMA, timeout=20)
+        verdict = await gemini.generate_json(LEAK_CHECK_SYSTEM, [{"text": json.dumps(check)}], LEAK_CHECK_SCHEMA,
+                                             timeout=10, fast=True)
     except gemini.GeminiError as exc:
         log.warning("Answer check unavailable, so the answer stays hidden: %s", exc)
         return True
@@ -469,7 +473,8 @@ async def take_turn(user: dict, lesson_id: str, action: str, text: str | None, m
     if gemini_enabled():
         try:
             prompt = _prompt(user, topic, lesson, session, action, text, graded, strategy, model)
-            raw = await gemini.generate_json(SYSTEM_PROMPT, [{"text": prompt}], STEP_SCHEMA)
+            raw = await gemini.generate_json(SYSTEM_PROMPT, [{"text": prompt}], STEP_SCHEMA,
+                                             timeout=STEP_TIMEOUT_SECONDS, backup_after=BACKUP_AFTER_SECONDS)
             step, hidden, misconception = _clean_step(raw)
             source = "gemini"
         except gemini.GeminiError as exc:

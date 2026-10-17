@@ -11,6 +11,8 @@ STORE_PATH = DATA_DIR / "store.json"
 
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip()
 GEMINI_FALLBACK_MODELS = [m.strip() for m in os.getenv("GEMINI_FALLBACK_MODELS", "").split(",") if m.strip()]
+# Quick model for speech understanding and answer checks, and the backup when the main model is slow.
+GEMINI_FAST_MODEL = os.getenv("GEMINI_FAST_MODEL", "gemini-3.5-flash-lite").strip()
 GEMINI_TTS_MODEL = os.getenv("GEMINI_TTS_MODEL", "gemini-3.8-flash-lite-tts").strip()
 GEMINI_TTS_VOICE = os.getenv("GEMINI_TTS_VOICE", "Achird").strip()
 # Empty means anyone may register as a teacher (fine for local demos).

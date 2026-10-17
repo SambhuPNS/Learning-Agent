@@ -10,9 +10,12 @@ To enable AI, set `GOOGLE_CLOUD_PROJECT` to your billing-enabled GCP project,
 enable `aiplatform.googleapis.com`, and run `gcloud auth application-default login`.
 Your ADC identity needs Vertex AI access, typically `roles/aiplatform.user`.
 Set `VERTEX_AI_LOCATION` (default `global`) and the `GEMINI_MODEL`,
-`GEMINI_FALLBACK_MODELS`, `GEMINI_TTS_MODEL`, and `GEMINI_TTS_VOICE` selections to
+`GEMINI_FALLBACK_MODELS`, `GEMINI_FAST_MODEL`, `GEMINI_TTS_MODEL`, and `GEMINI_TTS_VOICE` selections to
 values available in that project/location. The default text model is
-`gemini-3.8-flash`; no fallback models are enabled by default. Leave
+`gemini-3.8-flash`; no fallback models are enabled by default. `GEMINI_FAST_MODEL`
+(default `gemini-3.5-flash-lite`) understands spoken answers and runs the answer-leak
+check, and is also asked for a lesson step when the main model has not answered within
+8 seconds; whichever replies first is used. Leave
 `GOOGLE_CLOUD_PROJECT` empty for the scripted mock tutor. `GEMINI_API_KEY` is no
 longer used. The client refreshes ADC tokens automatically, outside the async
 event loop. Existing `gemini` health/source fields and internal names are retained
