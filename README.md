@@ -1,6 +1,6 @@
 # Elevate Tutor
 
-React/Vite frontend and FastAPI backend, packaged as one Cloud Run service. The backend serves `/api/*` and the built frontend at `/`. Gemini on Vertex AI generates structured lesson steps; React renders the content and predefined visuals.
+React/Vite frontend and FastAPI backend, packaged as one Cloud Run service. The backend serves `/api/*` and the built frontend at `/`. Gemini on Vertex AI generates structured lesson steps; React renders the content and predefined visuals. See the [architecture diagram](docs/architecture.svg) ([PNG](docs/architecture.png)).
 
 ## Local development
 
@@ -50,6 +50,28 @@ One-time setup in the Google Cloud Console (any project, for example the Vertex 
 The client ID is public, not a secret: teammates can reuse it to sign in locally without their own setup. Open the app at exactly `http://localhost:5173`; Google rejects unregistered origins such as `127.0.0.1`.
 
 A first Google sign-in from **Create account** uses the role (and invite code) chosen there; from **Sign in**, new accounts start as students. If a password account already uses that email, Google sign-in links to it and keeps its progress, but removes the password and signs out its other sessions, because anyone could have registered that email with a password.
+
+## Teacher authoring and homework
+
+**Topics.** In **Topics → New topic**, a teacher chooses where the lessons come from: typed text, an uploaded file (PDF, TXT or Markdown, up to 10 MB), or a web page. Gemini drafts lessons from that material and the teacher edits them before publishing. Web pages are fetched by the backend (`POST /api/teacher/topics/fetch-url`) and reduced to readable text with BeautifulSoup. Because the server makes the request, it only accepts `http(s)` on ports 80 and 443, refuses any address that is not public (localhost, private networks and the cloud metadata server), re-checks every redirect (at most 3), and limits pages to 2 MB and HTML or plain text. Pages that need JavaScript or a login cannot be read; paste their text instead.
+
+**Homework.** In **Homework**, a teacher picks a lesson, lets Gemini draft 4-10 questions (multiple choice or a short typed answer), checks every answer, sets a due date and publishes it to all students. Each student has one attempt; late work is accepted and flagged. Answers are marked by the same fixed rules as the tutor, and each answer updates the student model (mastery and misconceptions). Answer keys stay on the server until the student hands in. Before each question the tutor shows a short worked example in the explanation style that works best for that student; it uses a different example from the question and passes the same answer-leak check as lesson steps, and is simply left out if Gemini is unavailable. Each student sees the options in their own stable order. Once students have started, the questions are locked; teachers can still change the title, instructions, due date and visibility. Results show who has handed in, scores per question and the most common mistakes.
+
+Homework is stored in the `homework` and `submissions` Firestore collections (single-field queries only, so no extra index is needed).
+
+## AI usage and traceability
+
+Every Gemini call (lesson steps, answer-leak checks, speech understanding, voice, topic and homework drafting, homework examples) is recorded in one place, `_generate` in `backend/app/gemini.py`, with its token counts from Vertex AI (`usageMetadata`: input, output, thinking, cached and total), the model, the time taken and the outcome (ok, blocked by safety filters, failed or cancelled; a cancelled backup call still bills but its tokens are unknown). Each record also carries the signed-in student or teacher, the feature, the lesson or homework it served, and the request's Cloud Run trace ID. **Records hold metadata only: never prompts, answers or student text.**
+
+- **Cloud Logging.** Each call is written as one structured JSON line with `message: "gemini_usage"` and the trace field, so it appears next to the request's own logs. In Logs Explorer: `resource.type="cloud_run_revision" jsonPayload.message="gemini_usage"`, then add `jsonPayload.userId="..."` or a trace ID to follow one request. A Logging sink to BigQuery can be added later with no code change.
+- **Teacher page.** **AI usage** shows totals, tokens per day, usage by feature, model and student, and the latest calls with their trace IDs (`GET /api/teacher/usage?days=1..30`, teachers only).
+- **Firestore.** Records are stored in the `llmCalls` collection (single-field queries, no extra index) with an `expireAt` timestamp. Enable the expiry policy once per project so records are deleted after 30 days:
+
+```sh
+gcloud firestore fields ttls update expireAt --collection-group=llmCalls --enable-ttl --project YOUR_PROJECT_ID
+```
+
+Saving a record never blocks or fails a lesson: it runs in the background and any error is only logged. No dollar estimate is shown because prices depend on the model and your contract; the token counts are exact.
 
 ## Guardrails
 

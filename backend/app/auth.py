@@ -9,6 +9,7 @@ from google.auth import exceptions as google_exceptions
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as google_id_token
 
+from . import usage
 from .config import GOOGLE_CLIENT_ID, TEACHER_INVITE_CODE
 from .store import now_iso, store
 
@@ -146,6 +147,7 @@ def current_user(authorization: str | None = Header(default=None)) -> dict:
     user = store.get_user(user_id) if user_id else None
     if not user:
         raise HTTPException(401, "Your session has expired. Please sign in again.")
+    usage.set_user(user)
     return user
 
 

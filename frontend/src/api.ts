@@ -1,12 +1,21 @@
 import type {
   ClassOverview,
   Health,
+  HomeworkExample,
+  HomeworkInput,
+  HomeworkListItem,
+  HomeworkQuestionEdit,
+  HomeworkResult,
+  HomeworkResults,
+  HomeworkStart,
   Insights,
   Profile,
   Role,
   StudentDetail,
   StudentRow,
   Subject,
+  TeacherHomework,
+  TeacherHomeworkRow,
   TeacherTopic,
   TopicDraft,
   TopicInput,
@@ -15,7 +24,9 @@ import type {
   TurnResponse,
   Understanding,
   UploadedFile,
+  UsageReport,
   User,
+  WebNotes,
 } from './types'
 
 const TOKEN_KEY = 'elevate.token'
@@ -91,11 +102,31 @@ export const api = {
     topics: () => json<{ topics: TeacherTopic[] }>('/teacher/topics'),
     draftTopic: (input: { subject: string; title: string; gradeLevel: number; description: string; file?: UploadedFile }) =>
       json<TopicDraft>('/teacher/topics/draft', post(input)),
+    fetchNotesUrl: (url: string) => json<WebNotes>('/teacher/topics/fetch-url', post({ url })),
     createTopic: (topic: TopicInput) => json<TeacherTopic>('/teacher/topics', post(topic)),
     updateTopic: (id: string, topic: TopicInput) => json<TeacherTopic>(`/teacher/topics/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(topic) }),
     deleteTopic: (id: string) => json<{ ok: boolean }>(`/teacher/topics/${encodeURIComponent(id)}`, { method: 'DELETE' }),
     overview: () => json<ClassOverview>('/teacher/overview'),
     students: () => json<{ students: StudentRow[] }>('/teacher/students'),
     student: (id: string) => json<StudentDetail>(`/teacher/students/${encodeURIComponent(id)}`),
+    usage: (days: number) => json<UsageReport>(`/teacher/usage?days=${days}`),
+    homework: () => json<{ homework: TeacherHomeworkRow[] }>('/teacher/homework'),
+    homeworkDetail: (id: string) => json<TeacherHomework>(`/teacher/homework/${encodeURIComponent(id)}`),
+    draftHomework: (lessonId: string, count: number) =>
+      json<{ questions: HomeworkQuestionEdit[]; source: 'gemini' | 'outline' }>('/teacher/homework/draft', post({ lessonId, count })),
+    createHomework: (input: HomeworkInput) => json<TeacherHomework>('/teacher/homework', post(input)),
+    updateHomework: (id: string, input: HomeworkInput) =>
+      json<TeacherHomework>(`/teacher/homework/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(input) }),
+    deleteHomework: (id: string) => json<{ ok: boolean }>(`/teacher/homework/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    homeworkResults: (id: string) => json<HomeworkResults>(`/teacher/homework/${encodeURIComponent(id)}/results`),
+  },
+  homework: {
+    list: () => json<{ homework: HomeworkListItem[] }>('/homework'),
+    start: (id: string) => json<HomeworkStart>(`/homework/${encodeURIComponent(id)}/start`, { method: 'POST' }),
+    saveAnswer: (id: string, questionId: string, answer: string) =>
+      json<{ saved: number }>(`/homework/${encodeURIComponent(id)}/answer`, { method: 'PUT', body: JSON.stringify({ questionId, answer }) }),
+    example: (id: string, questionId: string) =>
+      json<{ example: HomeworkExample | null }>(`/homework/${encodeURIComponent(id)}/example`, post({ questionId })),
+    submit: (id: string, answers: Record<string, string>) => json<HomeworkResult>(`/homework/${encodeURIComponent(id)}/submit`, post({ answers })),
   },
 }

@@ -379,7 +379,7 @@ async def _reveals_answer(step: dict, question: dict) -> bool:
     }
     try:
         verdict = await gemini.generate_json(LEAK_CHECK_SYSTEM, [{"text": json.dumps(check)}], LEAK_CHECK_SCHEMA,
-                                             timeout=10, fast=True)
+                                             timeout=10, fast=True, purpose="tutor.leak_check")
     except gemini.GeminiError as exc:
         log.warning("Answer check unavailable, so the answer stays hidden: %s", exc)
         return True
@@ -417,7 +417,7 @@ def _last_step_id(session: dict) -> str | None:
 
 def _generate_step(prompt: str):
     return gemini.generate_json(SYSTEM_PROMPT, [{"text": prompt}], STEP_SCHEMA,
-                                timeout=STEP_TIMEOUT_SECONDS, backup_after=BACKUP_AFTER_SECONDS)
+                                timeout=STEP_TIMEOUT_SECONDS, backup_after=BACKUP_AFTER_SECONDS, purpose="tutor.step")
 
 
 async def prepare_continue(user: dict, lesson_id: str) -> dict | None:

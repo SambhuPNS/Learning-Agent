@@ -170,7 +170,8 @@ async def draft_plan(subject: str, title: str, grade: int, description: str, fil
                   + ("\nThe attached PDF contains the teacher's material." if file_part else ""))
         parts = [{"text": prompt}] + ([file_part] if file_part else [])
         try:
-            plan = await gemini.generate_json(PLAN_SYSTEM, parts, PLAN_SCHEMA, timeout=90, thinking="medium")
+            plan = await gemini.generate_json(PLAN_SYSTEM, parts, PLAN_SCHEMA, timeout=90, thinking="medium",
+                                            purpose="topic.draft")
             return {"summary": plan.get("summary", ""), "lessons": plan.get("lessons", []), "source": "gemini"}
         except gemini.GeminiError as exc:
             if file_part:

@@ -183,3 +183,28 @@ def test_prompt_uses_working_model_without_reloading(local_store, monkeypatch):
     monkeypatch.setattr(student_model, "get_model", unexpected_read)
     prompt = tutor._prompt(user, topic, lesson, session, "start", None, None, "visual", model)
     assert "relies on hints often" in prompt
+
+
+def _nested_arrays(value, inside_list=False):
+    """Firestore's rule: an array may not directly contain another array."""
+    if isinstance(value, dict):
+        return any(_nested_arrays(item) for item in value.values())
+    if isinstance(value, list):
+        return inside_list or any(_nested_arrays(item, True) for item in value)
+    return False
+
+
+def test_sessions_with_tables_are_stored_without_nested_arrays():
+    from app import blocks
+    from app.store import firestore_safe, from_firestore
+
+    content = blocks.to_content([{"type": "table", "columns": ["Fraction", "Decimal"],
+                                  "rows": [["1/2", "0.5"], ["1/4", "0.25"]]}])
+    session = {"lessonId": "x", "history": [{"role": "tutor", "content": content, "speech": "Look at the table."}], "correct": 0}
+    assert _nested_arrays(session)
+
+    stored = firestore_safe(session)
+    assert not _nested_arrays(stored)
+    assert from_firestore(stored) == session
+    assert from_firestore(None) is None and firestore_safe("text") == "text"
+    assert from_firestore(firestore_safe({"a": [[1, [2, 3]], []]})) == {"a": [[1, [2, 3]], []]}

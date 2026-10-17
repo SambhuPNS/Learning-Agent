@@ -5,11 +5,11 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Literal
 
-from fastapi import Depends, FastAPI, HTTPException, Response
+from fastapi import Depends, FastAPI, HTTPException, Query, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
-from . import auth, gemini, speech, student_model, topics, tutor
+from . import auth, gemini, homework, speech, student_model, topics, tutor, usage, webpage
 from .config import GEMINI_MODEL, GEMINI_TTS_MODEL, GOOGLE_CLIENT_ID, TEACHER_INVITE_CODE, gemini_enabled
 from .curriculum import STARTER_ORDER
 from .store import store
@@ -18,6 +18,22 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(messag
 log = logging.getLogger("tutor.api")
 
 app = FastAPI(title="Elevate Tutor API")
+
+
+class RequestContext:
+    """Starts a usage context for each request, so every Gemini call can be traced to its request and student."""
+
+    def __init__(self, inner) -> None:
+        self.inner = inner
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] == "http":
+            headers = dict(scope["headers"])
+            usage.begin_request(headers.get(b"x-cloud-trace-context", b"").decode("latin-1") or None)
+        await self.inner(scope, receive, send)
+
+
+app.add_middleware(RequestContext)
 
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 MAX_AUDIO_BASE64 = 8_000_000
@@ -129,6 +145,48 @@ class DraftIn(BaseModel):
     file: UploadedFile | None = None
 
 
+class UrlIn(BaseModel):
+    url: str = Field(min_length=1, max_length=2000)
+
+
+class HomeworkQuestionIn(BaseModel):
+    id: str | None = Field(default=None, max_length=20)
+    prompt: str = Field(min_length=1, max_length=300)
+    format: Literal["choice", "text"]
+    options: list[str] = Field(default_factory=list, max_length=4)
+    expectedAnswer: str = Field(default="", max_length=120)
+    acceptableAnswers: list[str] = Field(default_factory=list, max_length=8)
+    explanation: str = Field(default="", max_length=400)
+    misconception: str = Field(default="", max_length=140)
+
+
+class HomeworkIn(BaseModel):
+    title: str = Field(min_length=1, max_length=80)
+    instructions: str = Field(default="", max_length=500)
+    lessonId: str = Field(max_length=80)
+    dueAt: str = Field(min_length=1, max_length=40)
+    published: bool = False
+    questions: list[HomeworkQuestionIn] = Field(min_length=1, max_length=homework.MAX_QUESTIONS)
+
+
+class DraftHomeworkIn(BaseModel):
+    lessonId: str = Field(max_length=80)
+    count: int = Field(default=6, ge=3, le=homework.MAX_QUESTIONS)
+
+
+class HomeworkAnswerIn(BaseModel):
+    questionId: str = Field(max_length=20)
+    answer: str = Field(max_length=300)
+
+
+class HomeworkExampleIn(BaseModel):
+    questionId: str = Field(max_length=20)
+
+
+class HomeworkSubmitIn(BaseModel):
+    answers: dict[str, str] = Field(default_factory=dict, max_length=homework.MAX_QUESTIONS)
+
+
 @app.get("/api/health")
 def health() -> dict:
     return {"status": "ok", "gemini": gemini_enabled(), "model": GEMINI_MODEL if gemini_enabled() else None,
@@ -201,6 +259,7 @@ def my_insights(user: dict = Depends(auth.current_student)) -> dict:
 
 @app.post("/api/tutor/turn")
 async def tutor_turn(body: TurnIn, user: dict = Depends(auth.current_student)) -> dict:
+    usage.set_ref(body.lessonId)
     meta = body.meta.model_dump() if body.meta else None
     return await tutor.take_turn(user, body.lessonId, body.action, body.text, meta)
 
@@ -208,6 +267,7 @@ async def tutor_turn(body: TurnIn, user: dict = Depends(auth.current_student)) -
 @app.post("/api/tutor/prepare")
 async def tutor_prepare(body: PrepareIn, user: dict = Depends(auth.current_student)) -> dict:
     """Called while the student reads a step: makes the next step and its audio so Continue is instant."""
+    usage.set_ref(body.lessonId)
     step = await tutor.prepare_continue(user, body.lessonId)
     if step is None:
         return {"prepared": False}
@@ -222,6 +282,7 @@ async def tutor_prepare(body: PrepareIn, user: dict = Depends(auth.current_stude
 async def understand(body: UnderstandIn, user: dict = Depends(auth.current_student)) -> dict:
     if not gemini_enabled():
         raise HTTPException(503, "Vertex AI speech understanding is not configured.")
+    usage.set_ref(body.lessonId)
     question = tutor.pending_question(user, body.lessonId)
     try:
         return await speech.understand_audio(body.audio, body.mimeType, question)
@@ -247,6 +308,39 @@ async def synthesize(body: SpeakIn, user: dict = Depends(auth.current_user)) -> 
     return Response(content=audio, media_type="audio/wav", headers={"Cache-Control": "no-store"})
 
 
+# ---------- Homework (student) ----------
+
+@app.get("/api/homework")
+def my_homework(user: dict = Depends(auth.current_student)) -> dict:
+    return {"homework": homework.student_list(user)}
+
+
+@app.post("/api/homework/{homework_id}/start")
+def start_homework(homework_id: str, user: dict = Depends(auth.current_student)) -> dict:
+    return homework.start(user, homework_id)
+
+
+@app.put("/api/homework/{homework_id}/answer")
+def save_homework_answer(homework_id: str, body: HomeworkAnswerIn, user: dict = Depends(auth.current_student)) -> dict:
+    return homework.save_answer(user, homework_id, body.questionId, body.answer)
+
+
+@app.post("/api/homework/{homework_id}/example")
+async def homework_example(homework_id: str, body: HomeworkExampleIn, user: dict = Depends(auth.current_student)) -> dict:
+    usage.set_ref(homework_id)
+    return await homework.example(user, homework_id, body.questionId)
+
+
+@app.post("/api/homework/{homework_id}/submit")
+def submit_homework(homework_id: str, body: HomeworkSubmitIn, user: dict = Depends(auth.current_student)) -> dict:
+    return homework.submit(user, homework_id, body.answers)
+
+
+@app.get("/api/homework/{homework_id}/result")
+def homework_result(homework_id: str, user: dict = Depends(auth.current_student)) -> dict:
+    return homework.result(user, homework_id)
+
+
 # ---------- Teacher ----------
 
 def _topic_view(topic: dict, teacher: dict) -> dict:
@@ -259,12 +353,59 @@ def teacher_topics(teacher: dict = Depends(auth.current_teacher)) -> dict:
     return {"topics": [_topic_view(topic, teacher) for topic in items]}
 
 
+@app.post("/api/teacher/topics/fetch-url")
+async def fetch_notes_url(body: UrlIn, teacher: dict = Depends(auth.current_teacher)) -> dict:
+    return await webpage.fetch_notes(body.url)
+
+
 @app.post("/api/teacher/topics/draft")
 async def draft_topic(body: DraftIn, teacher: dict = Depends(auth.current_teacher)) -> dict:
     if not body.description.strip() and not body.file:
         raise HTTPException(422, "Add a description or upload your notes.")
     file = body.file.model_dump() if body.file else None
     return await topics.draft_plan(body.subject, body.title, body.gradeLevel, body.description, file)
+
+
+@app.get("/api/teacher/usage")
+def ai_usage(days: int = Query(7, ge=1, le=30), teacher: dict = Depends(auth.current_teacher)) -> dict:
+    return usage.report(days)
+
+
+@app.get("/api/teacher/homework")
+def teacher_homework(teacher: dict = Depends(auth.current_teacher)) -> dict:
+    return {"homework": homework.teacher_list(teacher)}
+
+
+@app.post("/api/teacher/homework/draft")
+async def draft_homework(body: DraftHomeworkIn, teacher: dict = Depends(auth.current_teacher)) -> dict:
+    usage.set_ref(body.lessonId)
+    return await homework.draft_questions(body.lessonId, body.count)
+
+
+@app.post("/api/teacher/homework")
+def create_homework(body: HomeworkIn, teacher: dict = Depends(auth.current_teacher)) -> dict:
+    return homework.create_homework(teacher, body.model_dump())
+
+
+@app.get("/api/teacher/homework/{homework_id}")
+def get_homework(homework_id: str, teacher: dict = Depends(auth.current_teacher)) -> dict:
+    return homework.teacher_detail(teacher, homework_id)
+
+
+@app.put("/api/teacher/homework/{homework_id}")
+def update_homework(homework_id: str, body: HomeworkIn, teacher: dict = Depends(auth.current_teacher)) -> dict:
+    return homework.update_homework(teacher, homework_id, body.model_dump())
+
+
+@app.delete("/api/teacher/homework/{homework_id}")
+def delete_homework(homework_id: str, teacher: dict = Depends(auth.current_teacher)) -> dict:
+    homework.delete_homework(teacher, homework_id)
+    return {"ok": True}
+
+
+@app.get("/api/teacher/homework/{homework_id}/results")
+def homework_results(homework_id: str, teacher: dict = Depends(auth.current_teacher)) -> dict:
+    return homework.results(teacher, homework_id)
 
 
 @app.post("/api/teacher/topics")
