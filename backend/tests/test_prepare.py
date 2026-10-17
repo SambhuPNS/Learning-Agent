@@ -117,3 +117,27 @@ def test_two_requests_for_the_same_speech_share_one_synthesis(monkeypatch):
     first, second = asyncio.run(both())
     assert first == second == b"RIFFHello" and calls == ["Hello"]
     assert asyncio.run(speech.cached_audio("Hello")) == first and calls == ["Hello"]
+
+
+def test_longer_speech_is_split_at_sentence_ends():
+    from app import speech
+
+    short = "Nice work! That's right."
+    assert speech.speech_parts(short) == [short]
+    long_text = ("Great question about fractions. When two fractions share a denominator, the pieces are the same size, "
+                 "so you only compare the numerators. Bigger numerator, bigger fraction.")
+    parts = speech.speech_parts(long_text)
+    assert parts[0] == "Great question about fractions." and " ".join(parts) == long_text and len(parts) == 3
+    opener = "Yes! " + long_text
+    assert speech.speech_parts(opener)[0] == "Yes! Great question about fractions."
+    assert speech.speech_parts("Compare 0.25 and 0.3 by writing 0.3 as 0.30, " * 4)[0].startswith("Compare 0.25 and 0.3")
+
+
+def test_tutor_steps_carry_their_speech_parts(lesson):
+    fake, user = lesson
+    text = "Here is a longer explanation of adding fractions. " + "Keep the denominator and add the numerators. " * 3
+    fake.steps.append(step("teach", "Long idea"))
+    fake.steps[-1]["speech"] = text
+    latest = asyncio.run(tutor.take_turn(user, LESSON, "continue", None))["history"][-1]["step"]
+    assert latest["speechParts"][0] == "Here is a longer explanation of adding fractions."
+    assert " ".join(latest["speechParts"]) == " ".join(text.split())

@@ -227,23 +227,22 @@ export class TutorVoice {
   }
 
   /** Resolves true when the line was spoken to the end, false when it was stopped or replaced. */
-  async speak(text: string, useGemini: boolean): Promise<boolean> {
+  async speak(text: string | string[], useGemini: boolean): Promise<boolean> {
     this.stop()
     const token = ++this.token
+    const parts = (Array.isArray(text) ? text : [text]).filter((part) => part.trim())
     this.onSpeakingChange(true)
     try {
-      if (useGemini) {
-        try {
-          const blob = await api.synthesize(text)
-          if (token !== this.token) return false
-          await this.playBlob(blob)
-          return token === this.token
-        } catch {
-          if (token !== this.token) return false
-        }
+      // Ask for every part at once: the short first part plays while the rest is still being made.
+      const audio = useGemini ? parts.map((part) => api.synthesize(part).then((blob) => blob, () => null)) : []
+      for (const [index, part] of parts.entries()) {
+        const blob = useGemini ? await audio[index] : null
+        if (token !== this.token) return false
+        if (blob) await this.playBlob(blob)
+        else await this.speakWithBrowser(part, token)
+        if (token !== this.token) return false
       }
-      await this.speakWithBrowser(text, token)
-      return token === this.token
+      return true
     } finally {
       if (token === this.token) this.onSpeakingChange(false)
     }

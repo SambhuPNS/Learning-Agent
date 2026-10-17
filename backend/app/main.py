@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import re
 from collections import defaultdict
@@ -211,7 +212,7 @@ async def tutor_prepare(body: PrepareIn, user: dict = Depends(auth.current_stude
     if step is None:
         return {"prepared": False}
     try:
-        await speech.cached_audio(step["speech"])
+        await asyncio.gather(*(speech.cached_audio(part) for part in speech.speech_parts(step["speech"])))
     except gemini.GeminiError as exc:
         log.info("Could not prepare audio for the next step: %s", exc)
     return {"prepared": True}

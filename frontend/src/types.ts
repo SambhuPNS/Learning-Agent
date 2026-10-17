@@ -61,6 +61,8 @@ export type TutorStep = {
   title: string
   paragraphs: string[]
   speech: string
+  /** The speech split so its opening plays while the rest is made; older saved steps don't have it. */
+  speechParts?: string[]
   visual: Visual | null
   content?: LessonContent[] | null
   feedback: { correct: boolean; message: string } | null

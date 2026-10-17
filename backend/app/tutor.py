@@ -13,7 +13,7 @@ import uuid
 
 from fastapi import HTTPException
 
-from . import answers, blocks, gemini, student_model, topics
+from . import answers, blocks, gemini, speech, student_model, topics
 from .config import gemini_enabled
 from .store import ConcurrentUpdateError, bounded_session, store
 
@@ -601,7 +601,8 @@ async def take_turn(user: dict, lesson_id: str, action: str, text: str | None, m
     if step["kind"] == "summary":
         session["complete"] = True
         session["pending"] = None
-    step.update(id=uuid.uuid4().hex, question=_public_question(session["pending"]), source=source)
+    step.update(id=uuid.uuid4().hex, question=_public_question(session["pending"]), source=source,
+                speechParts=speech.speech_parts(step["speech"]))
     session["tutorSteps"] = session.get("tutorSteps", sum(item["role"] == "tutor" for item in session["history"])) + 1
     session["history"].append({"role": "tutor", "step": step})
     student_model.log_event(events, user["id"], "tutor_step", kind=step["kind"], title=step["title"], strategy=step.get("strategy"),

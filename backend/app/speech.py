@@ -2,6 +2,7 @@
 
 import asyncio
 import hashlib
+import re
 from collections import OrderedDict
 
 from . import answers, gemini
@@ -84,6 +85,27 @@ class AudioCache:
 
 audio_cache = AudioCache()
 _synthesizing: dict[str, asyncio.Task] = {}
+SPLIT_SPEECH_FROM = 140
+MIN_PART = 20
+MAX_PARTS = 3
+
+
+def speech_parts(text: str) -> list[str]:
+    """Splits longer speech at sentence ends into up to three parts. All parts are synthesized at once; the short
+    opening plays while the rest is made, and the middle part covers the time the longer remainder takes."""
+    text = " ".join(text.split())
+    if len(text) < SPLIT_SPEECH_FROM:
+        return [text]
+    parts: list[str] = []
+    current = ""
+    for sentence in re.split(r"(?<=[.!?])\s+", text):
+        current = f"{current} {sentence}".strip()
+        if len(parts) < MAX_PARTS - 1 and len(current) >= MIN_PART:
+            parts.append(current)
+            current = ""
+    if current:
+        parts.append(current)
+    return parts
 
 
 async def cached_audio(text: str) -> bytes:

@@ -186,7 +186,7 @@ export function LessonScreen({
     if (!aliveRef.current) return false
     if (!force && !readAloudRef.current) return true
     setSpeakingId(step.id)
-    return voice.speak(step.speech, geminiVoice)
+    return voice.speak(step.speechParts?.length ? step.speechParts : step.speech, geminiVoice)
   }
 
   const cancelAutoNext = () => {
