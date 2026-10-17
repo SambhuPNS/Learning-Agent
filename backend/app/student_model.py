@@ -26,6 +26,7 @@ STRATEGY_GUIDES = {
     "practice": "Give a very brief explanation, then a fully worked example the student can copy.",
 }
 COMFORT_PRIOR = {"new": 0.1, "some": 0.3, "confident": 0.5}
+CARRY_WEIGHT, CARRY_DISCOUNT = 0.7, 0.8
 SLIP, GUESS, GUESS_AFTER_HINT, LEARN = 0.1, 0.2, 0.45, 0.12
 SLOW_ANSWER_MS = 20_000
 EXPLORATION = 0.35
@@ -52,12 +53,33 @@ def get_model(user: dict) -> dict:
     return store.get_model(user["id"], _new_model)
 
 
-def prior_mastery(user: dict, topic: dict) -> float:
+def topic_evidence(model: dict | None, topic: dict) -> tuple[float, int] | None:
+    """Average mastery (weighted by answers) across the lessons of this topic the student has practised."""
+    if not model:
+        return None
+    lesson_ids = {lesson["id"] for lesson in topic.get("lessons", [])}
+    practised = [item for lesson_id, item in model["concepts"].items() if lesson_id in lesson_ids and item["attempts"]]
+    if not practised:
+        return None
+    attempts = sum(item["attempts"] for item in practised)
+    return sum(item["mastery"] * item["attempts"] for item in practised) / attempts, attempts
+
+
+def prior_mastery(user: dict, topic: dict, model: dict | None = None) -> float:
+    """Starting mastery for a new lesson: the sign-up answers, blended with earlier lessons in the topic once there is evidence."""
     profile = user.get("profile") or {}
     if topic["id"] == "fractions":
-        return COMFORT_PRIOR.get(profile.get("fractionsComfort", "some"), 0.3)
-    confidence = profile.get("mathConfidence", 3) if topic.get("subject", "").lower().startswith("math") else 3
-    return 0.1 + 0.08 * (confidence - 1)
+        signup = COMFORT_PRIOR.get(profile.get("fractionsComfort", "some"), 0.3)
+    else:
+        confidence = profile.get("mathConfidence", 3) if topic.get("subject", "").lower().startswith("math") else 3
+        signup = 0.1 + 0.08 * (confidence - 1)
+    evidence = topic_evidence(model, topic)
+    if not evidence:
+        return signup
+    mastery, attempts = evidence
+    # A new lesson is new material, so earlier mastery counts a little less than face value.
+    weight = min(CARRY_WEIGHT, attempts / 10)
+    return round(min(0.85, max(0.05, (1 - weight) * signup + weight * CARRY_DISCOUNT * mastery)), 3)
 
 
 def concept(model: dict, lesson_id: str, prior: float) -> dict:
@@ -172,6 +194,43 @@ DIFFICULTY_GUIDES = {
     "core": "Core level: standard grade-level explanations and questions.",
     "stretch": "Stretch level: the student is doing well, so use harder questions and fewer hints.",
 }
+DIFFICULTY_REASONS = {
+    "foundation": "Small steps for now while this idea settles.",
+    "stretch": "You're doing well here, so the questions get harder.",
+}
+STYLE_PHRASES = {
+    "visual": ("a picture", "Pictures"),
+    "step-by-step": ("clear steps", "Clear steps"),
+    "real-world": ("a real-life example", "Real-life examples"),
+    "practice": ("a worked example", "Worked examples"),
+}
+
+
+def why_step(model: dict, user: dict, topic: dict, lesson_id: str, strategy: str | None, *,
+             starting: bool = False, replacing: str | None = None) -> str | None:
+    """One or two short sentences telling the student why the tutor chose this step, from the student model."""
+    reasons = []
+    item = model["concepts"].get(lesson_id)
+    if starting and item and not item["attempts"] and topic_evidence(model, topic):
+        reasons.append(f"Starting from how you did in your earlier {topic['title']} lessons.")
+    if strategy in STRATEGIES:
+        self_reported = (user.get("profile") or {}).get("learningStyle")
+        stats = strategy_scores(model, self_reported)[strategy]
+        one, many = STYLE_PHRASES[strategy]
+        if replacing and replacing != strategy:
+            before = STYLE_PHRASES[replacing][0] if replacing in STYLE_PHRASES else "the last explanation"
+            reasons.append(f"Trying {one} this time, since {before} didn't quite land.")
+        elif strategy == best_strategy(model, self_reported) and stats["success"] >= 2:
+            reasons.append(f"{many} have helped you most so far ({stats['success']} right answers), so this step uses {one}.")
+        elif strategy == self_reported and stats["evidence"] < 2:
+            reasons.append(f"Using {one}, as you chose at sign-up.")
+        else:
+            reasons.append(f"Trying {one} to see whether it suits you.")
+    if item:
+        difficulty = DIFFICULTY_REASONS.get(difficulty_for(item["mastery"]))
+        if difficulty and item["attempts"]:
+            reasons.append(difficulty)
+    return " ".join(reasons) or None
 
 
 def prompt_summary(model: dict, user: dict, lesson_id: str, prior: float) -> dict:

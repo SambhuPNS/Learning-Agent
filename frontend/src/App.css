@@ -185,6 +185,9 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .step-body .visual { margin: 7px 0; }
 .step-body p { color: #273a57; font-size: 16px; line-height: 1.6; }
 .feedback-banner { display: flex; gap: 8px; align-items: center; padding: 9px 12px; margin-bottom: 12px; font-size: 14px; border-radius: 8px; }
+.step-why { display: flex; gap: 7px; align-items: flex-start; margin: -2px 0 12px; color: var(--muted); font-size: 13px; line-height: 1.45; }
+.step-why svg { flex-shrink: 0; margin-top: 2px; color: var(--violet); }
+.step-why strong { color: var(--violet); font-weight: 700; }
 .feedback-banner.correct { color: #0d7b5c; background: var(--teal-soft); }
 .feedback-banner.incorrect { color: #b23c32; background: var(--red-soft); }
 .question-callout { display: flex; gap: 10px; align-items: flex-start; padding: 13px 15px; margin-top: 14px; color: var(--violet); background: #f6f3ff; border: 1px solid #e3dbff; border-radius: 10px; }

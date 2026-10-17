@@ -127,7 +127,7 @@ def _public_question(question: dict | None) -> dict | None:
 
 def _learner_view(user: dict, topic: dict, lesson: dict, session: dict, model: dict,
                   last_response_ms: int | None = None) -> dict:
-    prior = student_model.prior_mastery(user, topic)
+    prior = student_model.prior_mastery(user, topic, model)
     item = student_model.concept(model, lesson["id"], prior)
     self_reported = (user.get("profile") or {}).get("learningStyle")
     lesson_misconceptions = [label for label, entry in model["misconceptions"].items() if entry["lessonId"] == lesson["id"]]
@@ -221,7 +221,7 @@ def _instruction(action: str, text: str | None, session: dict, graded: bool | No
 def _prompt(user: dict, topic: dict, lesson: dict, session: dict, action: str, text: str | None,
             graded: bool | None, strategy: str | None, model: dict) -> str:
     profile = user.get("profile") or {}
-    prior = student_model.prior_mastery(user, topic)
+    prior = student_model.prior_mastery(user, topic, model)
     student = {
         "name": user["name"].split()[0],
         "grade": profile.get("grade"),
@@ -442,7 +442,7 @@ async def prepare_continue(user: dict, lesson_id: str) -> dict | None:
         _prepared.pop(stale, None)
     entry = _prepared.get(key)
     if not entry or entry["version"] != version or entry["afterStep"] != after_step:
-        student_model.concept(model, lesson_id, student_model.prior_mastery(user, topic))
+        student_model.concept(model, lesson_id, student_model.prior_mastery(user, topic, model))
         strategy = _choose_strategy(user, model, session, "continue", None)
         prompt = _prompt(user, topic, lesson, session, "continue", None, None, strategy, model)
         entry = {"version": version, "afterStep": after_step, "strategy": strategy,
@@ -504,7 +504,7 @@ async def take_turn(user: dict, lesson_id: str, action: str, text: str | None, m
         raise HTTPException(400, "Please type or say something first.")
 
     events: list[dict] = []
-    prior = student_model.prior_mastery(user, topic)
+    prior = student_model.prior_mastery(user, topic, model)
     student_model.concept(model, lesson_id, prior)
     attributed_strategy = session.get("lastStrategy")
     response_ms = meta.get("responseMs")
@@ -601,6 +601,10 @@ async def take_turn(user: dict, lesson_id: str, action: str, text: str | None, m
     if step["kind"] == "summary":
         session["complete"] = True
         session["pending"] = None
+    if source == "gemini" and not withheld and step["kind"] != "summary":
+        replacing = attributed_strategy if action == "explain_again" or (action == "answer" and graded is False) else None
+        step["why"] = student_model.why_step(model, user, topic, lesson_id, step.get("strategy") if explained else None,
+                                             starting=action == "start", replacing=replacing)
     step.update(id=uuid.uuid4().hex, question=_public_question(session["pending"]), source=source,
                 speechParts=speech.speech_parts(step["speech"]))
     session["tutorSteps"] = session.get("tutorSteps", sum(item["role"] == "tutor" for item in session["history"])) + 1

@@ -68,6 +68,8 @@ export type TutorStep = {
   feedback: { correct: boolean; message: string } | null
   question: Question | null
   strategy: Strategy | null
+  /** Why the tutor chose this step, from the student model (Gemini steps only). */
+  why?: string | null
   source: 'gemini' | 'mock'
 }
 

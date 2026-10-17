@@ -74,6 +74,9 @@ function StepCard({ step, active, speaking, onReplay }: { step: TutorStep; activ
           {speaking ? <span className="sound-bars" aria-hidden="true"><i /><i /><i /></span> : <Volume2 size={17} />}
         </button>
       </header>
+      {step.why && (
+        <p className="step-why"><Sparkles size={14} aria-hidden="true" /> <span><strong>Why this step:</strong> {step.why}</span></p>
+      )}
       {step.feedback && (
         <div className={`feedback-banner ${step.feedback.correct ? 'correct' : 'incorrect'}`}>
           {step.feedback.correct ? <CheckCircle2 size={18} /> : <XCircle size={18} />}
