@@ -82,6 +82,10 @@ class UnderstandIn(BaseModel):
     mimeType: Literal["audio/wav"] = "audio/wav"
 
 
+class PrepareIn(BaseModel):
+    lessonId: str = Field(max_length=80)
+
+
 class InterpretIn(BaseModel):
     lessonId: str = Field(max_length=80)
     transcript: str = Field(max_length=500)
@@ -200,6 +204,19 @@ async def tutor_turn(body: TurnIn, user: dict = Depends(auth.current_student)) -
     return await tutor.take_turn(user, body.lessonId, body.action, body.text, meta)
 
 
+@app.post("/api/tutor/prepare")
+async def tutor_prepare(body: PrepareIn, user: dict = Depends(auth.current_student)) -> dict:
+    """Called while the student reads a step: makes the next step and its audio so Continue is instant."""
+    step = await tutor.prepare_continue(user, body.lessonId)
+    if step is None:
+        return {"prepared": False}
+    try:
+        await speech.cached_audio(step["speech"])
+    except gemini.GeminiError as exc:
+        log.info("Could not prepare audio for the next step: %s", exc)
+    return {"prepared": True}
+
+
 @app.post("/api/speech/understand")
 async def understand(body: UnderstandIn, user: dict = Depends(auth.current_student)) -> dict:
     if not gemini_enabled():
@@ -221,14 +238,11 @@ def interpret(body: InterpretIn, user: dict = Depends(auth.current_student)) -> 
 async def synthesize(body: SpeakIn, user: dict = Depends(auth.current_user)) -> Response:
     if not gemini_enabled():
         raise HTTPException(503, "Vertex AI text-to-speech is not configured.")
-    audio = speech.audio_cache.get(body.text)
-    if audio is None:
-        try:
-            audio = await gemini.synthesize(body.text)
-        except gemini.GeminiError as exc:
-            log.warning("Speech synthesis failed: %s", exc)
-            raise HTTPException(502, "Speech synthesis failed.") from exc
-        speech.audio_cache.put(body.text, audio)
+    try:
+        audio = await speech.cached_audio(body.text)
+    except gemini.GeminiError as exc:
+        log.warning("Speech synthesis failed: %s", exc)
+        raise HTTPException(502, "Speech synthesis failed.") from exc
     return Response(content=audio, media_type="audio/wav", headers={"Cache-Control": "no-store"})
 
 

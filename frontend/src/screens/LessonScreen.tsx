@@ -282,6 +282,8 @@ export function LessonScreen({
     setAskMode(false)
     const last = response.history.at(-1)
     if (last?.role !== 'tutor') return
+    // While the student reads or listens, have the server prepare the likely next step and its audio.
+    if (geminiVoice && !response.state.awaitingAnswer && !response.state.complete) void api.prepare(lesson.id).catch(() => undefined)
     const finished = await speakStep(last.step)
     if (!aliveRef.current) return
     // Thinking time starts once the tutor has finished speaking.

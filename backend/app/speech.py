@@ -1,5 +1,6 @@
 """Speech understanding: transcribe the student's reply and extract their intent and answer."""
 
+import asyncio
 import hashlib
 from collections import OrderedDict
 
@@ -60,7 +61,7 @@ def _finalise(result: dict, question: dict | None) -> dict:
 
 
 class AudioCache:
-    def __init__(self, size: int = 64) -> None:
+    def __init__(self, size: int = 96) -> None:
         self.size = size
         self.items: OrderedDict[str, bytes] = OrderedDict()
 
@@ -82,3 +83,20 @@ class AudioCache:
 
 
 audio_cache = AudioCache()
+_synthesizing: dict[str, asyncio.Task] = {}
+
+
+async def cached_audio(text: str) -> bytes:
+    """Speech for `text`, from the cache or from Vertex AI; a second request for the same text waits for the first."""
+    audio = audio_cache.get(text)
+    if audio is not None:
+        return audio
+    key = audio_cache.key(text)
+    task = _synthesizing.get(key)
+    if task is None:
+        task = asyncio.create_task(gemini.synthesize(text))
+        _synthesizing[key] = task
+        task.add_done_callback(lambda _done: _synthesizing.pop(key, None))
+    audio = await asyncio.shield(task)
+    audio_cache.put(text, audio)
+    return audio

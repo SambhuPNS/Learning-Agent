@@ -4,6 +4,7 @@ Each turn: log the interaction -> update the student model -> pick a teaching st
 ask Gemini for the next step using profile + student model + topic data + conversation -> return UI-safe JSON.
 """
 
+import asyncio
 import html
 import json
 import logging
@@ -24,6 +25,10 @@ HISTORY_WINDOW = 16
 # The main model usually answers in 5-7 s; past this, the fast model is asked too and the first reply wins.
 BACKUP_AFTER_SECONDS = 8
 STEP_TIMEOUT_SECONDS = 25
+PREPARED_TTL_SECONDS = 600
+# Next steps generated ahead of a Continue, per lesson session. In memory only: they are never saved, and a
+# prepared step is used only if the learner's state has not changed since it was prepared.
+_prepared: dict[str, dict] = {}
 ACTION_LABELS = {
     "hint": "Can I have a hint?",
     "explain_again": "Can you explain that another way?",
@@ -403,6 +408,63 @@ def _safety_step(pending: dict | None) -> tuple[dict, dict | None]:
     return _scripted_step("question" if pending else "teach", "Back to the lesson", content), pending
 
 
+def _last_step_id(session: dict) -> str | None:
+    last = session["history"][-1] if session["history"] else None
+    return last["step"]["id"] if last and last["role"] == "tutor" else None
+
+
+def _generate_step(prompt: str):
+    return gemini.generate_json(SYSTEM_PROMPT, [{"text": prompt}], STEP_SCHEMA,
+                                timeout=STEP_TIMEOUT_SECONDS, backup_after=BACKUP_AFTER_SECONDS)
+
+
+async def prepare_continue(user: dict, lesson_id: str) -> dict | None:
+    """Generates the step a Continue would produce, while the student is still reading the current one.
+
+    Returns the prepared step (without saving anything), or None when a Continue is not possible now."""
+    if not gemini_enabled():
+        return None
+    topic, lesson = topics.find_lesson(lesson_id)
+    key = _session_key(user["id"], lesson_id)
+    try:
+        user, model, session, version = store.get_learning_state(user["id"], key, student_model._new_model)
+    except ConcurrentUpdateError:
+        return None
+    if not session or not user.get("profile"):
+        return None
+    for field, default in _new_session(lesson_id, topic["id"]).items():
+        session.setdefault(field, default)
+    after_step = _last_step_id(session)
+    if session["complete"] or session["pending"] or not after_step:
+        return None
+    cutoff = time.monotonic() - PREPARED_TTL_SECONDS
+    for stale in [k for k, entry in _prepared.items() if entry["createdAt"] < cutoff]:
+        _prepared.pop(stale, None)
+    entry = _prepared.get(key)
+    if not entry or entry["version"] != version or entry["afterStep"] != after_step:
+        student_model.concept(model, lesson_id, student_model.prior_mastery(user, topic))
+        strategy = _choose_strategy(user, model, session, "continue", None)
+        prompt = _prompt(user, topic, lesson, session, "continue", None, None, strategy, model)
+        entry = {"version": version, "afterStep": after_step, "strategy": strategy,
+                 "task": asyncio.create_task(_generate_step(prompt)), "createdAt": time.monotonic()}
+        _prepared[key] = entry
+    try:
+        raw = await asyncio.shield(entry["task"])
+    except gemini.GeminiError:
+        return None
+    return _clean_step(raw)[0]
+
+
+async def _prepared_reply(prepared: dict | None, version: int, after_step: str | None) -> tuple[dict, str] | None:
+    """The prepared Continue step and its strategy, if it still fits the lesson; waits if it is still being made."""
+    if not prepared or prepared["version"] != version or prepared["afterStep"] != after_step:
+        return None
+    try:
+        return await asyncio.shield(prepared["task"]), prepared["strategy"]
+    except gemini.GeminiError:
+        return None
+
+
 async def take_turn(user: dict, lesson_id: str, action: str, text: str | None, meta: dict | None = None) -> dict:
     topic, lesson = topics.find_lesson(lesson_id)
     key = _session_key(user["id"], lesson_id)
@@ -428,6 +490,9 @@ async def take_turn(user: dict, lesson_id: str, action: str, text: str | None, m
         action = "start"
     if session["complete"]:
         raise HTTPException(409, "This lesson is complete. Restart it to practise again.")
+    # Any turn retires the step prepared for this lesson; only a Continue from the same point can use it.
+    prepared = _prepared.pop(key, None)
+    after_step = _last_step_id(session)
 
     text = (text or "").strip() or None
     pending = session["pending"]
@@ -473,9 +538,11 @@ async def take_turn(user: dict, lesson_id: str, action: str, text: str | None, m
     step = hidden = misconception = None
     if gemini_enabled():
         try:
-            prompt = _prompt(user, topic, lesson, session, action, text, graded, strategy, model)
-            raw = await gemini.generate_json(SYSTEM_PROMPT, [{"text": prompt}], STEP_SCHEMA,
-                                             timeout=STEP_TIMEOUT_SECONDS, backup_after=BACKUP_AFTER_SECONDS)
+            ready = await _prepared_reply(prepared, version, after_step) if action == "continue" else None
+            if ready:
+                raw, strategy = ready
+            else:
+                raw = await _generate_step(_prompt(user, topic, lesson, session, action, text, graded, strategy, model))
             step, hidden, misconception = _clean_step(raw)
             source = "gemini"
         except gemini.GeminiError as exc:

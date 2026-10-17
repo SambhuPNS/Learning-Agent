@@ -82,6 +82,7 @@ export const api = {
   insights: () => json<Insights>('/me/insights'),
   turn: (lessonId: string, action: TurnAction, text?: string, meta?: TurnMeta) =>
     json<TurnResponse>('/tutor/turn', post({ lessonId, action, text, meta })),
+  prepare: (lessonId: string) => json<{ prepared: boolean }>('/tutor/prepare', post({ lessonId })),
   understand: (lessonId: string, audio: string, signal?: AbortSignal) =>
     json<Understanding>('/speech/understand', { ...post({ lessonId, audio, mimeType: 'audio/wav' }), signal }),
   interpret: (lessonId: string, transcript: string) => json<Understanding>('/speech/interpret', post({ lessonId, transcript })),
