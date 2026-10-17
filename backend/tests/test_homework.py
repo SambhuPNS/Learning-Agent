@@ -264,3 +264,16 @@ def test_each_student_sees_their_own_stable_option_order():
         assert res.json()["score"] == 1
     assert len(orders) > 1
     assert homework._public_question(question() | {"id": "abc12345", "options": ["True", "False"]}, "u1")["options"] == ["True", "False"]
+
+
+def test_example_prompt_lists_the_other_questions_so_they_are_not_given_away(monkeypatch):
+    teacher = account("hw.teacher@example.com", "teacher")
+    student = account("hw.others@example.com")
+    first = question("Compare 4/7 and 3/5?", ("4/7", "3/5"), "3/5")
+    second = question("Rewrite 2/3 over 24: top number?", ("16", "15"), "16")
+    created = create(teacher, [first, second], title="Others")
+    prompts = []
+    _gemini_example(monkeypatch, calls=prompts)
+    _ask_example(student, created["id"], created["questions"][0]["id"])
+    listed = prompts[0].split("OTHER QUESTIONS IN THIS HOMEWORK")[1]
+    assert "Rewrite 2/3 over 24" in listed and "Compare 4/7 and 3/5?" not in listed

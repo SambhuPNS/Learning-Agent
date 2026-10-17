@@ -396,7 +396,7 @@ EXAMPLE_SCHEMA = {
 
 EXAMPLE_SYSTEM = """You are Elevate, a warm one-to-one tutor for school students.
 A student is about to answer a homework question on their own. First you show a short worked example that teaches the idea the question tests.
-- Use a DIFFERENT example from the question: different numbers, objects or situation. Never solve the question itself.
+- Use a DIFFERENT example from the question and from the other homework questions listed: different numbers, objects or situation. Never solve any of them.
 - Never say or hint which option is right, and never show a diagram, chart or table that makes the answer obvious.
 - Follow the TEACHING STRATEGY you are given, and use the student's interests where it helps.
 - Match the difficulty guidance and the student's grade. Keep it short: 2-4 blocks, at most one diagram, chart or table.
@@ -422,6 +422,8 @@ async def _build_example(user: dict, homework: dict, question: dict) -> dict | N
             f"LESSON (written by the teacher):\n{json.dumps({'subject': topic['subject'], 'topic': topic['title'], 'lesson': lesson['title'], 'objectives': lesson.get('objectives', []), 'keyIdeas': lesson['keyIdeas']}, indent=2)}\n\n"
             f"HOMEWORK QUESTION (the student answers it right after your example):\n"
             f"{json.dumps({'prompt': question['prompt'], 'options': question['options']}, indent=2)}\n\n"
+            f"OTHER QUESTIONS IN THIS HOMEWORK (still unanswered; do not reuse their numbers, objects or situations):\n"
+            f"{json.dumps([q['prompt'] for q in homework['questions'] if q['id'] != question['id']], indent=2)}\n\n"
             f"TEACHING STRATEGY: {strategy}. {student_model.STRATEGY_GUIDES[strategy]}")
         raw = await gemini.generate_json(EXAMPLE_SYSTEM, [{"text": prompt}], EXAMPLE_SCHEMA, timeout=EXAMPLE_TIMEOUT_SECONDS,
                                          backup_after=EXAMPLE_BACKUP_AFTER_SECONDS)
