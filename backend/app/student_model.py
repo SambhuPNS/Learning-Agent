@@ -233,6 +233,12 @@ def why_step(model: dict, user: dict, topic: dict, lesson_id: str, strategy: str
     return " ".join(reasons) or None
 
 
+def ranked_misconceptions(model: dict) -> list[tuple[str, dict]]:
+    """Most common first, ties to the most recently seen. Firestore does not keep map order, so it must not decide."""
+    items = sorted(model["misconceptions"].items())
+    return sorted(items, key=lambda kv: (kv[1]["count"], kv[1].get("lastSeen") or ""), reverse=True)
+
+
 def prompt_summary(model: dict, user: dict, lesson_id: str, prior: float) -> dict:
     """Evidence-based view of the student that is sent to Gemini on every turn."""
     profile = user.get("profile") or {}
@@ -240,7 +246,7 @@ def prompt_summary(model: dict, user: dict, lesson_id: str, prior: float) -> dic
     scores = strategy_scores(model, profile.get("learningStyle"))
     behaviour = model["behaviour"]
     answers = max(1, behaviour["answers"])
-    misconceptions = sorted(model["misconceptions"].items(), key=lambda kv: -kv[1]["count"])[:3]
+    misconceptions = ranked_misconceptions(model)[:3]
     notes = []
     if behaviour["avgResponseMs"]:
         notes.append(f"usually answers in about {behaviour['avgResponseMs'] / 1000:.0f} seconds")
@@ -279,7 +285,7 @@ def insights(user: dict) -> dict:
                          "lastSeen": item["lastSeen"]})
     concepts.sort(key=lambda c: c["lastSeen"] or "", reverse=True)
     misconceptions = [{"label": label, "count": entry["count"], "lessonId": entry["lessonId"]}
-                      for label, entry in sorted(model["misconceptions"].items(), key=lambda kv: -kv[1]["count"])][:5]
+                      for label, entry in ranked_misconceptions(model)][:5]
     practised = [c for c in concepts if c["attempts"]]
     recommendations = []
     evidence = scores[best]["evidence"]

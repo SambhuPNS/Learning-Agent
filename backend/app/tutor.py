@@ -130,7 +130,9 @@ def _learner_view(user: dict, topic: dict, lesson: dict, session: dict, model: d
     prior = student_model.prior_mastery(user, topic, model)
     item = student_model.concept(model, lesson["id"], prior)
     self_reported = (user.get("profile") or {}).get("learningStyle")
-    lesson_misconceptions = [label for label, entry in model["misconceptions"].items() if entry["lessonId"] == lesson["id"]]
+    # The mistake in this lesson seen most recently; Firestore's map order is not stable, so it can't be relied on.
+    lesson_misconceptions = sorted((entry.get("lastSeen") or "", label) for label, entry in model["misconceptions"].items()
+                                   if entry["lessonId"] == lesson["id"])
     return {
         "mastery": round(item["mastery"] * 100),
         "difficulty": student_model.difficulty_for(item["mastery"]),
@@ -138,7 +140,7 @@ def _learner_view(user: dict, topic: dict, lesson: dict, session: dict, model: d
         "bestStrategy": student_model.best_strategy(model, self_reported),
         "avgResponseSec": round(model["behaviour"]["avgResponseMs"] / 1000, 1) if model["behaviour"]["avgResponseMs"] else None,
         "lastResponseSec": round(last_response_ms / 1000, 1) if last_response_ms is not None else None,
-        "watchFor": lesson_misconceptions[-1] if lesson_misconceptions else None,
+        "watchFor": lesson_misconceptions[-1][1] if lesson_misconceptions else None,
     }
 
 

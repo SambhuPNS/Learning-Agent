@@ -369,7 +369,7 @@ def teacher_overview(teacher: dict = Depends(auth.current_teacher)) -> dict:
         "needSupport": needs_support,
         "concepts": concepts,
         "misconceptions": [{"label": label, "count": count, "share": round(100 * count / total_mistakes)}
-                           for label, count in sorted(misconception_totals.items(), key=lambda kv: -kv[1])[:6]],
+                           for label, count in sorted(misconception_totals.items(), key=lambda kv: (-kv[1], kv[0]))[:6]],
         "strategies": [{"strategy": name, "label": student_model.STRATEGY_LABELS[name], "attempts": totals["attempts"],
                         "successRate": round(100 * totals["success"] / totals["attempts"]) if totals["attempts"] else None}
                        for name, totals in strategy_totals.items()],

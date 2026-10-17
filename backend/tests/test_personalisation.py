@@ -57,3 +57,20 @@ def test_gemini_steps_explain_themselves(tmp_path, monkeypatch):
     store.create_user(user, "token")
     first = asyncio.run(tutor.take_turn(user, "fraction-basics", "start", None))["history"][-1]["step"]
     assert first["why"] == "Using a picture, as you chose at sign-up."
+
+
+def test_tied_misconceptions_rank_the_same_whatever_order_storage_returns():
+    entries = {
+        "Swapping numerator and denominator": {"count": 2, "lessonId": "fraction-basics", "lastSeen": "2026-10-10T09:00:00+00:00"},
+        "Adding the same number to top and bottom": {"count": 2, "lessonId": "fraction-basics", "lastSeen": "2026-10-12T09:00:00+00:00"},
+        "Counting unequal pieces as fractions": {"count": 1, "lessonId": "fraction-basics", "lastSeen": "2026-10-13T09:00:00+00:00"},
+    }
+    tops = set()
+    for order in (list(entries), list(reversed(entries))):
+        model = student_model._new_model()
+        model["misconceptions"] = {label: entries[label] for label in order}
+        ranked = [label for label, _ in student_model.ranked_misconceptions(model)]
+        tops.add(tuple(ranked))
+        view = tutor._learner_view(USER, FRACTIONS, FRACTIONS["lessons"][0], {"lastStrategy": None}, model)
+        assert view["watchFor"] == "Counting unequal pieces as fractions"
+    assert tops == {("Adding the same number to top and bottom", "Swapping numerator and denominator", "Counting unequal pieces as fractions")}

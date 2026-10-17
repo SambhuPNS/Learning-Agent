@@ -133,6 +133,17 @@ cd backend && FIRESTORE_ENABLED=true GOOGLE_CLOUD_PROJECT=YOUR_PROJECT_ID \
   python scripts/seed_demo.py --password 'choose-a-password'
 ```
 
+### Copying the demo school to another deployment
+
+`backend/scripts/demo_data.json` is a snapshot of the demo school from the team's deployment: the 15 `@lakeview.example` accounts with their profiles, student models, lessons and activity history. It holds no passwords or sign-in tokens. To give another deployment exactly the same demo school, import it instead of running `seed_demo.py`:
+
+```sh
+cd backend && FIRESTORE_ENABLED=true GOOGLE_CLOUD_PROJECT=YOUR_PROJECT_ID \
+  python scripts/demo_data.py import --password 'choose-a-password'
+```
+
+The three accounts that can sign in get the password you pass. Accounts whose email already exists are skipped, so running it again is safe, and an interrupted import finishes when run again. The import takes about 30 seconds and makes no Gemini calls. To refresh the snapshot after changing the demo school, run `python scripts/demo_data.py export` with the same settings against the deployment that has the changes. Both commands also work with local JSON storage when `FIRESTORE_ENABLED` is not set.
+
 ## Migrating local data
 
 Back up `backend/data/store.json` and the destination database first. Use local Application Default Credentials with database-write access. Stop local writes and perform the import before starting Cloud Run: startup adds the starter topics to the database.
