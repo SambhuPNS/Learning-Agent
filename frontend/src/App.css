@@ -84,7 +84,8 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .google-button { display: flex; justify-content: center; min-height: 44px; }
 
 /* Onboarding */
-.onboarding-page { display: grid; min-height: 100svh; padding: 40px 20px; place-items: center; background: var(--canvas); }
+.onboarding-page { position: relative; display: grid; min-height: 100svh; padding: 40px 20px; place-items: center; background: var(--canvas); }
+.onboarding-back { position: absolute; top: 18px; left: 20px; }
 .onboarding-card { width: min(760px, 100%); padding: 32px; background: #fff; border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); }
 .onboarding-card h1 { color: var(--ink); font-family: 'Fraunces', serif; font-size: 30px; line-height: 1.15; }
 .onboarding-card h2 { margin: 26px 0 10px; color: var(--ink); font-size: 15px; }
@@ -197,12 +198,14 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .visual { padding: 16px; margin: 16px 0 0; background: #fafcff; border: 1px solid #e6edf6; border-radius: 10px; }
 .visual-items { display: flex; flex-wrap: wrap; gap: 22px 34px; align-items: center; justify-content: center; }
 .fraction-circles .visual-item { display: flex; gap: 12px; align-items: center; }
-.fraction-bars .visual-items { flex-direction: column; align-items: stretch; gap: 12px; }
-.fraction-bars .visual-item { display: grid; grid-template-columns: minmax(0, 1fr) 54px; gap: 12px; align-items: center; }
+.fraction-bars .visual-items { display: grid; grid-template-columns: minmax(0, 420px) auto; justify-content: center; align-items: center; gap: 12px 14px; }
+/* Every bar and label shares one grid so the wholes line up exactly, with each label right beside its bar. */
+.fraction-bars .visual-item { display: contents; }
 .visual-wholes { display: flex; flex-wrap: wrap; gap: 8px; }
-.visual-wholes.bars { flex-direction: column; }
+/* Grid (not a flex column) so each bar's full height is reserved; a flex column sized them at 300px wide and they overflowed. */
+.visual-wholes.bars { display: grid; }
 .fraction-svg.circle { width: 118px; height: 118px; }
-.fraction-svg.bar { width: 100%; max-width: 420px; height: auto; }
+.fraction-svg.bar { display: block; width: 100%; height: auto; }
 .fraction-svg.number-line { width: 100%; height: auto; }
 .visual-label { font-family: 'Fraunces', serif; font-size: 24px; font-weight: 700; }
 .axis-label { fill: #4b5f7b; font-size: 15px; font-weight: 700; }
