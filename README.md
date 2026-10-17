@@ -112,22 +112,22 @@ Sessions retain the most recent 64 history entries, with an additional 750 KB UT
 
 Elevate ships with five starter topics: Fractions and Decimals & percentages (Mathematics), Photosynthesis and The water cycle (Science), and Parts of speech (English). Each is a lesson plan of key ideas and common misconceptions that Gemini teaches from. On start-up the app adds any starter topic that is missing from storage, and leaves existing topics, including edited ones, alone.
 
-`backend/scripts/seed_demo.py` adds demo sign-ins and a synthetic class, so the teacher dashboards and student insights have something to show:
+`backend/scripts/seed_demo.py` adds sign-ins and a class with realistic history, so the teacher dashboards and student insights have something to show:
 
-- `demo.teacher@example.com`: a teacher.
-- `demo.student@example.com`: a student with about a week of history. She chose visual explanations at sign-up, but her answers show that real-life examples work better.
-- `new.student@example.com`: a new student who goes through the sign-up questions.
-- 12 synthetic students with two weeks of progress, mistakes and teaching-style results. Each simulated answer goes through the real student model. They cannot sign in.
+- `priya.menon@lakeview.example`: a teacher.
+- `riya.sharma@lakeview.example`: a student with about a week of history. She chose visual explanations at sign-up, but her answers show that real-life examples work better.
+- `kiran.rao@lakeview.example`: a new student who goes through the sign-up questions.
+- 12 more students with two weeks of progress, mistakes and teaching-style results. Each simulated answer goes through the real student model. They cannot sign in.
 
-All three sign-ins use the password you pass. Share it privately, for example in the hackathon submission notes, never in this repository. The script only creates what is missing, so running it again is safe.
+The reserved `.example` domain means these addresses can never belong to a real person; pass `--email-domain` to use another. All three sign-ins use the password you pass. Share it privately, for example in the hackathon submission notes, never in this repository. The script only creates what is missing, so running it again is safe.
 
 ```sh
 # Local JSON storage
-cd backend && .venv/bin/python scripts/seed_demo.py --password 'choose-a-demo-password'
+cd backend && .venv/bin/python scripts/seed_demo.py --password 'choose-a-password'
 
 # Firestore used by Cloud Run (needs Application Default Credentials, e.g. from Cloud Shell)
 cd backend && FIRESTORE_ENABLED=true GOOGLE_CLOUD_PROJECT=YOUR_PROJECT_ID \
-  python scripts/seed_demo.py --password 'choose-a-demo-password'
+  python scripts/seed_demo.py --password 'choose-a-password'
 ```
 
 ## Migrating local data

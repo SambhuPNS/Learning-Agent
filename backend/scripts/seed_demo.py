@@ -3,10 +3,10 @@
 Run from backend/. It writes to the same storage as the app: data/store.json, or Firestore when
 FIRESTORE_ENABLED=true and GOOGLE_CLOUD_PROJECT are set (with Application Default Credentials).
 
-    .venv/bin/python scripts/seed_demo.py --password 'choose-a-demo-password'
+    .venv/bin/python scripts/seed_demo.py --password 'choose-a-password'
 
 Creates anything that is missing (running it again skips existing accounts):
-  - a demo teacher and two demo students who sign in with --password,
+  - a teacher and two students who sign in with --password (first.last@<--email-domain>),
   - a class of synthetic students (they cannot sign in) whose progress fills the teacher dashboard,
   - the starter topics.
 Each synthetic answer goes through the real student model, so mastery, teaching-style scores and
@@ -30,9 +30,11 @@ from app.config import TEACHER_INVITE_CODE  # noqa: E402
 from app.curriculum import seed_topics  # noqa: E402
 from app.store import store  # noqa: E402
 
-TEACHER = ("Priya Menon", "demo.teacher@example.com")
-STUDENT = ("Riya Sharma", "demo.student@example.com")
-NEW_STUDENT = ("Kiran Rao", "new.student@example.com")
+# The .example domain is reserved, so these addresses can never belong to a real person or Google account.
+EMAIL_DOMAIN = "lakeview.example"
+TEACHER = "Priya Menon"
+STUDENT = "Riya Sharma"
+NEW_STUDENT = "Kiran Rao"
 CLASS = [
     ("Aarav Mehta", 7), ("Diya Iyer", 7), ("Kabir Singh", 6), ("Ananya Rao", 7), ("Rohan Das", 8), ("Meera Nair", 6),
     ("Arjun Patel", 7), ("Saanvi Gupta", 7), ("Vihaan Kumar", 6), ("Ishita Banerjee", 8), ("Yuki Tanaka", 7), ("Liam Chen", 7),
@@ -176,7 +178,12 @@ def ensure_starter_topics() -> None:
             print(f"  added topic {topic['title']}")
 
 
-def sign_up(name: str, email: str, password: str, role: str) -> dict | None:
+def email_for(name: str, domain: str) -> str:
+    return f"{'.'.join(name.lower().split())}@{domain}"
+
+
+def sign_up(name: str, domain: str, password: str, role: str) -> dict | None:
+    email = email_for(name, domain)
     if store.find_user_by_email(email):
         print(f"  {email} already exists, skipped")
         return None
@@ -185,12 +192,11 @@ def sign_up(name: str, email: str, password: str, role: str) -> dict | None:
     return user
 
 
-def class_student(name: str, grade: int, rng: random.Random) -> dict | None:
-    first, last = name.lower().split()
-    email = f"{first}.{last}@class.example.com"
+def class_student(name: str, domain: str) -> dict | None:
+    email = email_for(name, domain)
     if store.find_user_by_email(email):
         return None
-    user = {"id": uuid.uuid4().hex, "name": name, "email": email, "role": "student", "demo": True,
+    user = {"id": uuid.uuid4().hex, "name": name, "email": email, "role": "student", "seeded": True,
             "createdAt": iso(datetime.now(timezone.utc) - timedelta(days=16)), "profile": None, "progress": {}}
     # No password and an unguessable token: these learners exist only to fill the class dashboards.
     store.create_user(user, hashlib.sha256(secrets.token_bytes(32)).hexdigest())
@@ -199,7 +205,8 @@ def class_student(name: str, grade: int, rng: random.Random) -> dict | None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--password", required=True, help="Password for the demo teacher and demo students (8+ characters).")
+    parser.add_argument("--password", required=True, help="Password for the teacher and the two students who can sign in (8+ characters).")
+    parser.add_argument("--email-domain", default=EMAIL_DOMAIN, help=f"Domain for the generated addresses (default {EMAIL_DOMAIN}).")
     parser.add_argument("--seed", type=int, default=2026, help="Random seed, so the synthetic class is reproducible.")
     args = parser.parse_args()
     if len(args.password) < 8:
@@ -210,10 +217,11 @@ def main() -> None:
     print("Topics")
     ensure_starter_topics()
 
-    print("Demo sign-ins")
-    sign_up(*TEACHER, args.password, "teacher")
-    sign_up(*NEW_STUDENT, args.password, "student")
-    student = sign_up(*STUDENT, args.password, "student")
+    domain = args.email_domain
+    print("Sign-ins")
+    sign_up(TEACHER, domain, args.password, "teacher")
+    sign_up(NEW_STUDENT, domain, args.password, "student")
+    student = sign_up(STUDENT, domain, args.password, "student")
     if student:
         student["profile"] = {"grade": 7, "mathConfidence": 3, "fractionsComfort": "some", "learningStyle": "visual",
                               "pace": "steady", "interests": ["Cricket", "Space", "Music"], "voiceEnabled": True}
@@ -227,13 +235,13 @@ def main() -> None:
         sim.end_at(now - timedelta(hours=20))
         sim.save()
 
-    print("Synthetic class")
+    print("Class")
     created = 0
     # A spread of abilities: the weakest few stall early, so the dashboard has learners who need support.
     abilities = [0.12, 0.2, 0.3, 0.42, 0.5, 0.58, 0.65, 0.7, 0.76, 0.82, 0.88, 0.93]
     rng.shuffle(abilities)
     for (name, grade), ability in zip(CLASS, abilities):
-        user = class_student(name, grade, rng)
+        user = class_student(name, domain)
         if not user:
             continue
         user["profile"] = profile_for(grade, rng)
@@ -253,11 +261,11 @@ def main() -> None:
         sim.end_at(now - timedelta(hours=rng.uniform(2, 120 if ability < 0.35 else 72)))
         sim.save()
         created += 1
-    print(f"  created {created} synthetic students")
+    print(f"  created {created} class students")
 
     print("\nSign in with (password as given):")
-    for name, email in (TEACHER, STUDENT, NEW_STUDENT):
-        print(f"  {name:12} {email}")
+    for name, role in ((TEACHER, "teacher"), (STUDENT, "student with history"), (NEW_STUDENT, "new student")):
+        print(f"  {email_for(name, domain):28} {role}")
 
 
 if __name__ == "__main__":
