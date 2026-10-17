@@ -121,7 +121,7 @@ function App() {
       <aside className="sidebar">
         <div className="brand-mark">
           <span className="brand-icon"><GraduationCap size={21} /></span>
-          <strong>brightpath</strong>
+          <strong>elevate</strong>
         </div>
         <div className="learner-card">
           <span className="avatar-initial">{user.name.charAt(0).toUpperCase()}</span>

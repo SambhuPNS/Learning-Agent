@@ -1,4 +1,4 @@
-# brightpath Student Frontend
+# Elevate Student Frontend
 
 React + TypeScript client for the personalised AI tutor. It talks only to the Python backend in `../backend` (proxied at `/api`).
 

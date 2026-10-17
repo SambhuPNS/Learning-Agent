@@ -468,7 +468,7 @@ def seed_topics(created_at: str) -> list[dict]:
         "gradeLevel": 7,
         "description": "Understanding fractions as equal parts of a whole, equivalent fractions, comparing fractions and adding or subtracting fractions with the same denominator.",
         "createdBy": "system",
-        "createdByName": "Brightpath starter content",
+        "createdByName": "Elevate starter content",
         "createdAt": created_at,
         "published": True,
         "lessons": lessons,

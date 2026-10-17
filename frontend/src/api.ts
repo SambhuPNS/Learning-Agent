@@ -18,7 +18,7 @@ import type {
   User,
 } from './types'
 
-const TOKEN_KEY = 'brightpath.token'
+const TOKEN_KEY = 'elevate.token'
 
 export class ApiError extends Error {
   status: number

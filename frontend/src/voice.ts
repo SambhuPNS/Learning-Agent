@@ -201,7 +201,8 @@ export class TutorVoice {
     this.onSpeakingChange = onSpeakingChange
   }
 
-  async speak(text: string, useGemini: boolean): Promise<void> {
+  /** Resolves true when the line was spoken to the end, false when it was stopped or replaced. */
+  async speak(text: string, useGemini: boolean): Promise<boolean> {
     this.stop()
     const token = ++this.token
     this.onSpeakingChange(true)
@@ -209,14 +210,15 @@ export class TutorVoice {
       if (useGemini) {
         try {
           const blob = await api.synthesize(text)
-          if (token !== this.token) return
+          if (token !== this.token) return false
           await this.playBlob(blob)
-          return
+          return token === this.token
         } catch {
-          if (token !== this.token) return
+          if (token !== this.token) return false
         }
       }
       await this.speakWithBrowser(text, token)
+      return token === this.token
     } finally {
       if (token === this.token) this.onSpeakingChange(false)
     }

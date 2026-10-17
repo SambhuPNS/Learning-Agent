@@ -22,7 +22,6 @@ TARGET_CORRECT = 3
 ESTIMATED_STEPS = 8
 HISTORY_WINDOW = 16
 ACTION_LABELS = {
-    "continue": "I'm ready, let's continue.",
     "hint": "Can I have a hint?",
     "explain_again": "Can you explain that another way?",
 }
@@ -69,7 +68,7 @@ STEP_SCHEMA = {
     "required": ["kind", "title", "strategy", "blocks", "speech", "feedback", "question"],
 }
 
-SYSTEM_PROMPT = """You are Brightpath, a warm, patient one-to-one tutor for school students. You can teach any subject.
+SYSTEM_PROMPT = """You are Elevate, a warm, patient one-to-one tutor for school students. You can teach any subject.
 You teach one lesson step by step and return exactly one lesson step as JSON.
 
 Teaching rules:
@@ -383,7 +382,7 @@ def _scripted_step(kind: str, title: str, content: list[dict], feedback: dict | 
 
 def _withheld_step(pending: dict | None, correct: bool | None) -> tuple[dict, dict | None]:
     if correct:
-        message = "That's right, well done! Press Continue when you're ready."
+        message = "That's right, well done! Let's keep going."
         return _scripted_step("feedback", "Nice work!", [{"type": "text", "text": message}], {"correct": True, "message": message}), None
     message = "Not quite yet. Have another go." if correct is False else "I can't give you the answer, but you can work it out!"
     content = [{"type": "text", "text": message}]
@@ -394,7 +393,7 @@ def _withheld_step(pending: dict | None, correct: bool | None) -> tuple[dict, di
 
 
 def _safety_step(pending: dict | None) -> tuple[dict, dict | None]:
-    follow = "Here's the question again." if pending else "Press Continue when you're ready."
+    follow = "Here's the question again." if pending else "Let's get back to it."
     content = [{"type": "text", "text": "Let's keep our chat kind and about the lesson."}, {"type": "text", "text": follow}]
     return _scripted_step("question" if pending else "teach", "Back to the lesson", content), pending
 
@@ -447,7 +446,8 @@ async def take_turn(user: dict, lesson_id: str, action: str, text: str | None, m
     graded = answers.matches(text, pending) if action == "answer" else None
     if action == "start":
         student_model.log_event(events, user["id"], "lesson_started", **base_event)
-    else:
+    elif text or action != "continue":
+        # A plain Continue (button or auto-advance) is not something the student said, so it isn't shown.
         session["history"].append({"role": "student", "action": action, "text": text or ACTION_LABELS[action]})
     if action == "continue":
         student_model.log_event(events, user["id"], "continue", dwellMs=response_ms, **base_event)

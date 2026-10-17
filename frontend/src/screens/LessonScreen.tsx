@@ -4,10 +4,12 @@ import {
   ArrowRight,
   CheckCircle2,
   Ear,
+  FastForward,
   Lightbulb,
   LoaderCircle,
   MessageCircleQuestion,
   Mic,
+  Pause,
   RefreshCw,
   RotateCcw,
   Send,
@@ -29,11 +31,19 @@ type InputMode = NonNullable<TurnMeta['inputMode']>
 
 const KIND_LABEL: Record<TutorStep['kind'], string> = { teach: 'Learn', question: 'Your turn', feedback: 'Feedback', summary: 'Summary' }
 const STUDENT_LABEL: Partial<Record<TurnAction, string>> = {
-  continue: "I'm ready, let's continue.",
   hint: 'Can I have a hint?',
   explain_again: 'Can you explain that another way?',
 }
 const DIFFICULTY_LABEL = { foundation: 'Building foundations', core: 'On track', stretch: 'Ready for a challenge' }
+
+/** How long a finished step stays on screen before the tutor moves on by itself. */
+function pauseAfter(step: TutorStep, listened: boolean) {
+  const words = step.paragraphs.join(' ').split(/\s+/).filter(Boolean).length
+  const visuals = step.content?.length ? step.content.filter((block) => block.type === 'visual').length : step.visual ? 1 : 0
+  // After hearing the step a short beat is enough; otherwise leave time to read it.
+  const ms = (listened ? 1500 : words * 350) + visuals * 2500
+  return Math.min(25_000, Math.max(listened ? 2500 : 5000, ms))
+}
 
 function ContentBlock({ block }: { block: LessonContent }) {
   if (block.type === 'text') return <p>{block.text}</p>
@@ -109,6 +119,8 @@ export function LessonScreen({
   const [heard, setHeard] = useState<Understanding | null>(null)
   const [readAloud, setReadAloud] = useState(user.profile?.voiceEnabled ?? true)
   const [handsFree, setHandsFree] = useState(false)
+  const [autoContinue, setAutoContinue] = useState(true)
+  const [autoNext, setAutoNext] = useState<{ id: number; ms: number } | null>(null)
   const [speakingId, setSpeakingId] = useState<string | null>(null)
 
   const [voice] = useState(
@@ -124,6 +136,9 @@ export function LessonScreen({
   const stateRef = useRef<LessonState | null>(null)
   const readAloudRef = useRef(readAloud)
   const handsFreeRef = useRef(handsFree)
+  const autoContinueRef = useRef(autoContinue)
+  const autoTimerRef = useRef<number | null>(null)
+  const draftRef = useRef('')
   const startedRef = useRef(false)
   const readyAtRef = useRef(performance.now())
   const feedEndRef = useRef<HTMLDivElement>(null)
@@ -136,7 +151,8 @@ export function LessonScreen({
   useEffect(() => {
     readAloudRef.current = readAloud
     handsFreeRef.current = handsFree
-  }, [readAloud, handsFree])
+    autoContinueRef.current = autoContinue
+  }, [readAloud, handsFree, autoContinue])
 
   useEffect(() => {
     feedEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
@@ -147,18 +163,43 @@ export function LessonScreen({
       voice.stop()
       recorderRef.current?.cancel()
       stopRecognitionRef.current?.()
+      if (autoTimerRef.current !== null) window.clearTimeout(autoTimerRef.current)
     },
     [voice],
   )
 
+  /** Resolves false if the student stopped the tutor mid-sentence. */
   const speakStep = async (step: TutorStep, force = false) => {
-    if (!force && !readAloudRef.current) return
+    if (!force && !readAloudRef.current) return true
     setSpeakingId(step.id)
-    await voice.speak(step.speech, geminiVoice)
+    return voice.speak(step.speech, geminiVoice)
+  }
+
+  const cancelAutoNext = () => {
+    if (autoTimerRef.current !== null) window.clearTimeout(autoTimerRef.current)
+    autoTimerRef.current = null
+    setAutoNext(null)
+  }
+
+  const scheduleAutoNext = (ms: number) => {
+    cancelAutoNext()
+    setAutoNext({ id: Date.now(), ms })
+    autoTimerRef.current = window.setTimeout(() => {
+      autoTimerRef.current = null
+      setAutoNext(null)
+      void runTurn('continue')
+    }, ms)
+  }
+
+  const updateDraft = (value: string) => {
+    setDraft(value)
+    draftRef.current = value
+    if (value) cancelAutoNext()
   }
 
   const runTurn = async (action: TurnAction, text?: string, inputMode?: InputMode, responseMs?: number) => {
     if (busyRef.current) return
+    cancelAutoNext()
     busyRef.current = true
     voice.stop()
     setBusy(true)
@@ -188,14 +229,22 @@ export function LessonScreen({
     setLearner(response.learner)
     setNotice(response.notice)
     setDraft('')
+    draftRef.current = ''
     setAskMode(false)
     const last = response.history.at(-1)
     if (last?.role !== 'tutor') return
-    await speakStep(last.step)
+    const finished = await speakStep(last.step)
     // Thinking time starts once the tutor has finished speaking.
     if (stateRef.current === response.state) readyAtRef.current = performance.now()
     const stillCurrent = stateRef.current === response.state && !busyRef.current && !listeningRef.current
-    if (handsFreeRef.current && readAloudRef.current && !response.state.complete && stillCurrent) void listen()
+    if (!stillCurrent || response.state.complete) return
+    // Like a teacher: keep going until a question needs an answer, unless the student has stepped in.
+    const resumed = action === 'start' && response.history.length > 1
+    if (!response.state.awaitingAnswer && autoContinueRef.current && finished && !resumed && !draftRef.current) {
+      scheduleAutoNext(pauseAfter(last.step, readAloudRef.current))
+    } else if (handsFreeRef.current && readAloudRef.current) {
+      void listen()
+    }
   }
 
   const route = (understanding: Understanding, responseMs: number) => {
@@ -203,15 +252,15 @@ export function LessonScreen({
       case 'answer':
         return runTurn('answer', understanding.answer, 'voice', responseMs)
       case 'hint':
-        return runTurn('hint', undefined, 'voice', responseMs)
+        return runTurn('hint', understanding.transcript, 'voice', responseMs)
       case 'explain_again':
-        return runTurn('explain_again', undefined, 'voice', responseMs)
+        return runTurn('explain_again', understanding.transcript, 'voice', responseMs)
       case 'continue':
         if (stateRef.current?.awaitingAnswer) {
           setNotice("Have a go at the question first. You can also say 'give me a hint'.")
           return
         }
-        return runTurn('continue', undefined, 'voice', responseMs)
+        return runTurn('continue', understanding.transcript, 'voice', responseMs)
       case 'ask':
         return runTurn('ask', understanding.question, 'voice', responseMs)
       default:
@@ -226,6 +275,7 @@ export function LessonScreen({
       return
     }
     if (busyRef.current || !canListen) return
+    cancelAutoNext()
     voice.stop()
     listeningRef.current = true
     const listenStartedAt = performance.now()
@@ -301,6 +351,11 @@ export function LessonScreen({
     setReadAloud(!readAloud)
   }
 
+  const toggleAutoContinue = () => {
+    if (autoContinue) cancelAutoNext()
+    setAutoContinue(!autoContinue)
+  }
+
   const disabled = busy || voiceState !== 'idle'
   const progressPercent = lessonState ? Math.min(100, Math.round((lessonState.correct / lessonState.target) * 100)) : 0
 
@@ -331,7 +386,11 @@ export function LessonScreen({
                   step={item.step}
                   active={item.step.id === lastTutor?.id}
                   speaking={speakingId === item.step.id}
-                  onReplay={() => (speakingId === item.step.id ? voice.stop() : void speakStep(item.step, true))}
+                  onReplay={() => {
+                    cancelAutoNext()
+                    if (speakingId === item.step.id) voice.stop()
+                    else void speakStep(item.step, true)
+                  }}
                 />
               ),
             )}
@@ -346,6 +405,14 @@ export function LessonScreen({
             {(error || notice) && <p className={error ? 'dock-alert error' : 'dock-alert'} role="status">{error ?? notice}</p>}
             {heard && voiceState === 'idle' && (
               <p className="heard"><Ear size={15} /> Heard: “{heard.transcript}”{heard.intent === 'answer' && heard.answer ? <> → <strong>{heard.answer}</strong></> : null}</p>
+            )}
+            {autoNext && (
+              <div className="auto-next" role="status">
+                <FastForward size={15} />
+                <span>Moving on in a moment</span>
+                <div className="auto-next-track" aria-hidden="true"><i key={autoNext.id} style={{ animationDuration: `${autoNext.ms}ms` }} /></div>
+                <button type="button" className="ghost-button small" onClick={cancelAutoNext}><Pause size={13} /> Pause</button>
+              </div>
             )}
 
             {lessonState?.complete ? (
@@ -383,7 +450,7 @@ export function LessonScreen({
                     <form className="answer-form" onSubmit={submitDraft}>
                       <input
                         value={draft}
-                        onChange={(e) => setDraft(e.target.value)}
+                        onChange={(e) => updateDraft(e.target.value)}
                         placeholder={askMode ? 'Ask your tutor a question…' : 'Type your answer, e.g. 3/8'}
                         aria-label={askMode ? 'Your question' : 'Your answer'}
                         disabled={disabled}
@@ -397,7 +464,7 @@ export function LessonScreen({
                     <p className="dock-hint">{voiceState === 'listening' ? 'Listening… say your answer' : 'Pick an answer above, or tap the mic and say it.'}</p>
                   ) : (
                     <form className="answer-form" onSubmit={submitDraft}>
-                      <input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Ask a question, or press Continue" aria-label="Your question" disabled={disabled} maxLength={500} />
+                      <input value={draft} onChange={(e) => updateDraft(e.target.value)} placeholder="Ask a question, or press Continue" aria-label="Your question" disabled={disabled} maxLength={500} />
                       {draft.trim() ? (
                         <button className="ghost-button" type="submit" disabled={disabled}>Ask <Send size={15} /></button>
                       ) : (
@@ -451,7 +518,7 @@ export function LessonScreen({
           </section>
 
           <section className="rail-card">
-            <h3>Voice</h3>
+            <h3>Voice &amp; pace</h3>
             <label className="switch-row">
               <span>{readAloud ? <Volume2 size={16} /> : <VolumeX size={16} />} Read aloud</span>
               <input type="checkbox" role="switch" checked={readAloud} onChange={toggleReadAloud} />
@@ -460,8 +527,13 @@ export function LessonScreen({
               <span><Mic size={16} /> Hands-free conversation</span>
               <input type="checkbox" role="switch" checked={handsFree} onChange={() => setHandsFree(!handsFree)} disabled={!canListen || !readAloud} />
             </label>
+            <label className="switch-row">
+              <span><FastForward size={16} /> Keep teaching automatically</span>
+              <input type="checkbox" role="switch" checked={autoContinue} onChange={toggleAutoContinue} />
+            </label>
             <p className="rail-note">
-              {handsFree ? 'After the tutor speaks, the mic opens automatically. Just answer out loud.' : 'Tap the mic to answer, ask for a hint, or ask a question out loud.'}
+              {autoContinue && 'Your tutor keeps teaching and waits when it asks you something. Type or tap the mic any time to jump in. '}
+              {handsFree ? "The mic opens by itself when it's your turn, so just answer out loud." : 'Tap the mic to answer, ask for a hint, or ask a question out loud.'}
             </p>
             {speakingId && (
               <button type="button" className="ghost-button small" onClick={() => voice.stop()}><Square size={13} /> Stop speaking</button>

@@ -1,4 +1,4 @@
-# Brightpath Tutor
+# Elevate Tutor
 
 React/Vite frontend and FastAPI backend, packaged as one Cloud Run service. The backend serves `/api/*` and the built frontend at `/`. Gemini on Vertex AI generates structured lesson steps; React renders the content and predefined visuals.
 
@@ -36,7 +36,7 @@ The Vite development server proxies `/api` to port 8000. Production uses the sam
 
 ## Google sign-in
 
-Without `GOOGLE_CLIENT_ID`, the app uses local email/password accounts, so it runs with no Google setup. Once it is set, students and teachers sign in only with Google: password sign-up and sign-in are turned off, and the backend checks each Google ID token's signature, audience, expiry, and verified email.
+Email/password accounts always work, so the app runs with no Google setup. Setting `GOOGLE_CLIENT_ID` adds **Continue with Google** alongside them; the backend checks each Google ID token's signature, audience, expiry, and verified email.
 
 One-time setup in the Google Cloud Console (any project, for example the Vertex AI one):
 
@@ -46,7 +46,7 @@ One-time setup in the Google Cloud Console (any project, for example the Vertex 
 
 The client ID is public, not a secret: teammates can reuse it to sign in locally without their own setup. Open the app at exactly `http://localhost:5173`; Google rejects unregistered origins such as `127.0.0.1`.
 
-On first sign-in, users choose Student or Teacher, plus the invite code when `TEACHER_INVITE_CODE` is set; later sign-ins keep the original role. Accounts created earlier with a password are matched by their verified Google email, so their progress is kept.
+A first Google sign-in from **Create account** uses the role (and invite code) chosen there; from **Sign in**, new accounts start as students. If a password account already uses that email, Google sign-in links to it and keeps its progress, but removes the password and signs out its other sessions, because anyone could have registered that email with a password.
 
 ## Guardrails
 
@@ -80,10 +80,10 @@ REGION=YOUR_REGION
 REPOSITORY=YOUR_ARTIFACT_REPOSITORY
 RUNTIME_SERVICE_ACCOUNT=YOUR_RUNTIME_SERVICE_ACCOUNT_EMAIL
 GOOGLE_CLIENT_ID=YOUR_OAUTH_CLIENT_ID
-IMAGE="$REGION-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/brightpath:DEPLOYMENT_TAG"
+IMAGE="$REGION-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/elevate:DEPLOYMENT_TAG"
 
 gcloud builds submit --project "$PROJECT_ID" --tag "$IMAGE" .
-gcloud run deploy brightpath \
+gcloud run deploy elevate \
   --project "$PROJECT_ID" \
   --region "$REGION" \
   --image "$IMAGE" \

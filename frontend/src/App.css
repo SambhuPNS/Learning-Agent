@@ -79,6 +79,8 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .segmented button { height: 36px; color: #5a6f8c; font-size: 13px; font-weight: 700; background: transparent; border: 0; border-radius: 7px; }
 .segmented button.active { color: var(--ink); background: #fff; box-shadow: 0 2px 6px rgba(20, 40, 80, 0.1); }
 .auth-note { color: var(--muted); font-size: 14px; line-height: 1.5; }
+.auth-divider { display: flex; gap: 12px; align-items: center; color: var(--muted); font-size: 12px; font-weight: 700; text-transform: uppercase; }
+.auth-divider::before, .auth-divider::after { flex: 1; height: 1px; content: ''; background: var(--line); }
 .google-button { display: flex; justify-content: center; min-height: 44px; }
 
 /* Onboarding */
@@ -260,6 +262,10 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .listening-bar { display: flex; gap: 12px; align-items: center; color: var(--red); font-size: 12.5px; font-weight: 700; }
 .listening-bar .level { flex: 1; height: 6px; overflow: hidden; background: #f6e2e0; border-radius: 99px; }
 .listening-bar .level i { display: block; height: 100%; background: var(--red); transition: width 0.08s; }
+.auto-next { display: flex; gap: 10px; align-items: center; color: var(--blue); font-size: 12.5px; font-weight: 700; }
+.auto-next-track { flex: 1; height: 4px; overflow: hidden; background: var(--blue-soft); border-radius: 99px; }
+.auto-next-track i { display: block; height: 100%; background: var(--blue); transform-origin: left; animation: auto-next linear forwards; }
+@keyframes auto-next { from { transform: scaleX(0); } to { transform: scaleX(1); } }
 .support-row { display: flex; flex-wrap: wrap; gap: 8px; }
 .complete-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
 .complete-actions > div { display: flex; flex: 1; gap: 8px; align-items: center; color: var(--amber); }

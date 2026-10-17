@@ -15,7 +15,7 @@ export function TeacherApp({ user, health, onSignOut, onAuthError }: { user: Use
       <aside className="sidebar">
         <div className="brand-mark">
           <span className="brand-icon"><GraduationCap size={21} /></span>
-          <strong>brightpath</strong>
+          <strong>elevate</strong>
         </div>
         <div className="learner-card">
           <span className="avatar-initial teacher">{user.name.charAt(0).toUpperCase()}</span>

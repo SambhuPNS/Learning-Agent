@@ -153,6 +153,17 @@ class FirestoreStore:
     def delete_token(self, token_hash: str) -> None:
         self.db.collection("tokens").document(token_hash).delete()
 
+    def link_google_account(self, user_id: str, google_id: str) -> None:
+        """Attach a Google identity, removing the password and signing out every existing session."""
+        from google.cloud import firestore
+        from google.cloud.firestore_v1.base_query import FieldFilter
+
+        for snapshot in self.db.collection("tokens").where(filter=FieldFilter("userId", "==", user_id)).stream():
+            snapshot.reference.delete()
+        self.db.collection("users").document(user_id).update({
+            "googleId": google_id, "salt": firestore.DELETE_FIELD, "passwordHash": firestore.DELETE_FIELD,
+        })
+
     def all_topics(self) -> list[dict]:
         return [snapshot.to_dict() for snapshot in self.db.collection("topics").stream()]
 
@@ -269,6 +280,15 @@ class LocalStore(JsonStore):
     def delete_token(self, token_hash: str) -> None:
         with self.lock:
             self.data["tokens"].pop(token_hash, None)
+            self.save()
+
+    def link_google_account(self, user_id: str, google_id: str) -> None:
+        with self.lock:
+            user = self.data["users"][user_id]
+            user["googleId"] = google_id
+            user.pop("salt", None)
+            user.pop("passwordHash", None)
+            self.data["tokens"] = {token: owner for token, owner in self.data["tokens"].items() if owner != user_id}
             self.save()
 
     def all_topics(self) -> list[dict]:

@@ -15,7 +15,7 @@ from .store import store
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("tutor.api")
 
-app = FastAPI(title="Brightpath Tutor API")
+app = FastAPI(title="Elevate Tutor API")
 
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 MAX_AUDIO_BASE64 = 8_000_000
