@@ -161,3 +161,17 @@ def test_firestore_homework_is_handed_in_once_and_updates_the_model_together(fir
 
     firestore_store.delete_homework("hw1")
     assert firestore_store.get_homework("hw1") is None
+
+
+def test_firestore_sessions_keep_table_rows(firestore_store):
+    learner = user()
+    firestore_store.create_user(learner, "token")
+    _, model, _, version = firestore_store.get_learning_state(learner["id"], "learner:tables", student_model._new_model)
+    session = tutor._new_session("comparing-fractions", "fractions")
+    table = {"type": "visual", "visual": {"type": "table", "columns": ["a", "b"], "rows": [["1", "2"], ["3", "4"]]}}
+    session["history"].append({"role": "tutor", "content": [table], "speech": "A table."})
+    firestore_store.commit_learning_turn(learner["id"], "learner:tables", version, model, session, {"mastery": 0}, [])
+    stored = firestore_store.get_session("learner:tables")
+    assert stored["history"][-1]["content"][0]["visual"]["rows"] == [["1", "2"], ["3", "4"]]
+    _, _, again, _ = firestore_store.get_learning_state(learner["id"], "learner:tables", student_model._new_model)
+    assert again["history"][-1]["content"][0]["visual"]["rows"] == [["1", "2"], ["3", "4"]]

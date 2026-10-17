@@ -34,6 +34,27 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def firestore_safe(value: Any, inside_list: bool = False) -> Any:
+    """Firestore rejects arrays that directly contain arrays (a table's rows, for example), so inner lists become {"_list": [...]}."""
+    if isinstance(value, dict):
+        return {key: firestore_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        items = [firestore_safe(item, True) for item in value]
+        return {"_list": items} if inside_list else items
+    return value
+
+
+def from_firestore(value: Any) -> Any:
+    """Reverses firestore_safe."""
+    if isinstance(value, dict):
+        if set(value) == {"_list"}:
+            return [from_firestore(item) for item in value["_list"]]
+        return {key: from_firestore(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [from_firestore(item) for item in value]
+    return value
+
+
 class JsonStore:
     """Tiny file-backed store standing in for Firestore during local development."""
 
@@ -254,7 +275,7 @@ class FirestoreStore:
 
     def get_session(self, key: str) -> dict | None:
         snapshot = self.db.collection("sessions").document(key).get()
-        return snapshot.to_dict() if snapshot.exists else None
+        return from_firestore(snapshot.to_dict()) if snapshot.exists else None
 
     def get_model(self, user_id: str, factory: Callable[[], dict]) -> dict:
         snapshot = self.db.collection("studentModels").document(user_id).get()
@@ -269,7 +290,7 @@ class FirestoreStore:
             if user is None:
                 raise ConcurrentUpdateError("The learner account no longer exists.")
             model = next(transaction.get(self.db.collection("studentModels").document(user_id))).to_dict()
-            session = next(transaction.get(self.db.collection("sessions").document(key))).to_dict()
+            session = from_firestore(next(transaction.get(self.db.collection("sessions").document(key))).to_dict())
             return user, model if model is not None else factory(), session, user.get("_learningVersion", 0)
 
         return read(self.db.transaction())
@@ -289,7 +310,7 @@ class FirestoreStore:
             updated_progress = {**user.get("progress", {}), session["lessonId"]: progress}
             transaction.update(user_ref, {"progress": updated_progress, "_learningVersion": version + 1})
             transaction.set(self.db.collection("studentModels").document(user_id), model)
-            transaction.set(self.db.collection("sessions").document(key), session)
+            transaction.set(self.db.collection("sessions").document(key), firestore_safe(session))
             for event in events:
                 transaction.set(self.db.collection("events").document(event["id"]), event)
 
