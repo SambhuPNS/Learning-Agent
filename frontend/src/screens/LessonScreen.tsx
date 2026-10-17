@@ -140,6 +140,8 @@ export function LessonScreen({
   const autoTimerRef = useRef<number | null>(null)
   const draftRef = useRef('')
   const startedRef = useRef(false)
+  // False once the student leaves the lesson; replies that arrive later must not speak, continue or listen.
+  const aliveRef = useRef(true)
   const readyAtRef = useRef(performance.now())
   const feedEndRef = useRef<HTMLDivElement>(null)
 
@@ -158,18 +160,20 @@ export function LessonScreen({
     feedEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
   }, [history.length, pendingStudent, busy])
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    aliveRef.current = true
+    return () => {
+      aliveRef.current = false
       voice.stop()
       recorderRef.current?.cancel()
       stopRecognitionRef.current?.()
       if (autoTimerRef.current !== null) window.clearTimeout(autoTimerRef.current)
-    },
-    [voice],
-  )
+    }
+  }, [voice])
 
-  /** Resolves false if the student stopped the tutor mid-sentence. */
+  /** Resolves false if the student stopped the tutor mid-sentence or left the lesson. */
   const speakStep = async (step: TutorStep, force = false) => {
+    if (!aliveRef.current) return false
     if (!force && !readAloudRef.current) return true
     setSpeakingId(step.id)
     return voice.speak(step.speech, geminiVoice)
@@ -183,9 +187,11 @@ export function LessonScreen({
 
   const scheduleAutoNext = (ms: number) => {
     cancelAutoNext()
+    if (!aliveRef.current) return
     setAutoNext({ id: Date.now(), ms })
     autoTimerRef.current = window.setTimeout(() => {
       autoTimerRef.current = null
+      if (!aliveRef.current) return
       setAutoNext(null)
       void runTurn('continue')
     }, ms)
@@ -198,7 +204,7 @@ export function LessonScreen({
   }
 
   const runTurn = async (action: TurnAction, text?: string, inputMode?: InputMode, responseMs?: number) => {
-    if (busyRef.current) return
+    if (busyRef.current || !aliveRef.current) return
     cancelAutoNext()
     busyRef.current = true
     voice.stop()
@@ -222,6 +228,7 @@ export function LessonScreen({
       setBusy(false)
       setPendingStudent(null)
     }
+    if (!aliveRef.current) return
     stateRef.current = response.state
     readyAtRef.current = performance.now()
     setHistory(response.history)
@@ -234,6 +241,7 @@ export function LessonScreen({
     const last = response.history.at(-1)
     if (last?.role !== 'tutor') return
     const finished = await speakStep(last.step)
+    if (!aliveRef.current) return
     // Thinking time starts once the tutor has finished speaking.
     if (stateRef.current === response.state) readyAtRef.current = performance.now()
     const stillCurrent = stateRef.current === response.state && !busyRef.current && !listeningRef.current
@@ -274,7 +282,7 @@ export function LessonScreen({
       stopRecognitionRef.current?.()
       return
     }
-    if (busyRef.current || !canListen) return
+    if (busyRef.current || !canListen || !aliveRef.current) return
     cancelAutoNext()
     voice.stop()
     listeningRef.current = true
@@ -293,6 +301,7 @@ export function LessonScreen({
         const recording = await recorder.start(setLevel)
         recorderRef.current = null
         listeningRef.current = false
+        if (!aliveRef.current) return
         if (!recording) {
           setVoiceState('idle')
           setNotice("I didn't hear anything. Tap the mic and try again.")
@@ -307,6 +316,7 @@ export function LessonScreen({
         const transcript = await recognition.result
         stopRecognitionRef.current = null
         listeningRef.current = false
+        if (!aliveRef.current) return
         if (!transcript.trim()) {
           setVoiceState('idle')
           setNotice("I didn't hear anything. Tap the mic and try again.")
@@ -316,6 +326,7 @@ export function LessonScreen({
         setVoiceState('thinking')
         understanding = await api.interpret(lesson.id, transcript)
       }
+      if (!aliveRef.current) return
       setVoiceState('idle')
       setHeard(understanding)
       await route(understanding, responseMs)

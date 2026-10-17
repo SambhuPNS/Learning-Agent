@@ -65,6 +65,7 @@ export class UtteranceRecorder {
   private processor?: ScriptProcessorNode
   private chunks: Float32Array[] = []
   private resolve?: (recording: Recording | null) => void
+  private cancelled = false
   private startedAt = 0
   private lastVoiceAt = 0
   private firstVoiceAt = 0
@@ -74,6 +75,11 @@ export class UtteranceRecorder {
     this.stream = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
     })
+    // Cancelled while the browser was still opening the microphone.
+    if (this.cancelled) {
+      this.stream.getTracks().forEach((track) => track.stop())
+      return null
+    }
     this.context = new AudioContext()
     const source = this.context.createMediaStreamSource(this.stream)
     this.processor = this.context.createScriptProcessor(4096, 1, 1)
@@ -111,6 +117,7 @@ export class UtteranceRecorder {
   }
 
   cancel() {
+    this.cancelled = true
     this.finish(false)
   }
 
