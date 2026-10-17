@@ -159,6 +159,81 @@ export type TeacherTopic = {
 export type TopicInput = Pick<TeacherTopic, 'subject' | 'title' | 'gradeLevel' | 'description' | 'published' | 'lessons'>
 export type UploadedFile = { name: string; mimeType: 'application/pdf' | 'text/plain' | 'text/markdown'; data?: string; text?: string }
 export type TopicDraft = { summary: string; lessons: TopicLesson[]; source: 'gemini' | 'outline' }
+export type WebNotes = { url: string; title: string; text: string; words: number }
+
+export type HomeworkStatus = 'todo' | 'in_progress' | 'submitted'
+export type HomeworkListItem = {
+  id: string
+  title: string
+  topicTitle: string
+  lessonTitle: string
+  dueAt: string
+  questionCount: number
+  status: HomeworkStatus
+  overdue: boolean
+  late: boolean
+  score: number | null
+  total: number | null
+}
+export type HomeworkExample = { title: string; strategy: Strategy; why: string | null; content: LessonContent[] }
+export type HomeworkQuestion = { id: string; prompt: string; format: 'choice' | 'text'; options: string[] }
+export type HomeworkReviewItem = {
+  questionId: string
+  prompt: string
+  options: string[]
+  yourAnswer: string
+  correct: boolean
+  correctAnswer: string
+  explanation: string
+}
+export type HomeworkResult = {
+  homeworkId: string
+  title: string
+  score: number
+  total: number
+  late: boolean
+  submittedAt: string
+  review: HomeworkReviewItem[]
+}
+export type HomeworkStart =
+  | { submitted: true; result: HomeworkResult }
+  | {
+      submitted: false
+      homework: { id: string; title: string; instructions: string; dueAt: string; topicTitle: string; lessonTitle: string; questions: HomeworkQuestion[] }
+      answers: Record<string, string>
+    }
+
+export type HomeworkQuestionEdit = {
+  id?: string
+  prompt: string
+  format: 'choice' | 'text'
+  options: string[]
+  expectedAnswer: string
+  acceptableAnswers: string[]
+  explanation: string
+  misconception: string
+}
+export type HomeworkInput = { title: string; instructions: string; lessonId: string; dueAt: string; published: boolean; questions: HomeworkQuestionEdit[] }
+export type TeacherHomework = HomeworkInput & { id: string; locked: boolean; topicTitle: string; lessonTitle: string }
+export type TeacherHomeworkRow = {
+  id: string
+  title: string
+  topicTitle: string
+  lessonTitle: string
+  dueAt: string
+  published: boolean
+  questionCount: number
+  students: number
+  submitted: number
+  averagePercent: number | null
+}
+export type HomeworkResults = {
+  homework: { id: string; title: string; dueAt: string; topicTitle: string; lessonTitle: string }
+  averagePercent: number | null
+  students: { userId: string; name: string; email: string; status: 'not_started' | 'in_progress' | 'overdue' | 'submitted' | 'late'; score: number | null; total: number | null; submittedAt: string | null }[]
+  questions: { questionId: string; prompt: string; correctAnswer: string; answered: number; percentCorrect: number | null }[]
+  misconceptions: { label: string; count: number }[]
+}
 
 export type StudentRow = {
   id: string

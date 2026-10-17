@@ -1,15 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
-import { BookOpen, Brain, CheckCircle2, ChevronRight, LoaderCircle, PlayCircle, RotateCcw, Sparkles } from 'lucide-react'
+import { BookOpen, Brain, CheckCircle2, ChevronRight, ClipboardList, LoaderCircle, PlayCircle, RotateCcw, Sparkles } from 'lucide-react'
 import { api } from '../api'
 import { BehaviourStats, ConceptList, StrategyChart } from '../components/Insights'
-import { STRATEGY_LABEL } from '../labels'
-import type { Insights, LessonSummary, Subject, User } from '../types'
+import { formatDue, STRATEGY_LABEL } from '../labels'
+import type { HomeworkListItem, Insights, LessonSummary, Subject, User } from '../types'
 
-type Props = { user: User; onOpenLesson: (lesson: LessonSummary) => void; onAuthError: (err: unknown) => void }
+type Props = { user: User; onOpenLesson: (lesson: LessonSummary) => void; onOpenHomework: (id: string) => void; onAuthError: (err: unknown) => void }
 
-export function HomeScreen({ user, onOpenLesson, onAuthError }: Props) {
+export function HomeScreen({ user, onOpenLesson, onOpenHomework, onAuthError }: Props) {
   const [subjects, setSubjects] = useState<Subject[] | null>(null)
   const [insights, setInsights] = useState<Insights | null>(null)
+  const [homework, setHomework] = useState<HomeworkListItem[]>([])
   const [subjectId, setSubjectId] = useState<string | null>(null)
   const [topicId, setTopicId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -24,6 +25,8 @@ export function HomeScreen({ user, onOpenLesson, onAuthError }: Props) {
         onAuthError(err)
         setError((err as Error).message)
       })
+    // Homework is optional on this page, so a failure here must not hide the lessons.
+    api.homework.list().then((data) => setHomework(data.homework)).catch(() => undefined)
   }, [onAuthError])
 
   const subject = subjects?.find((item) => item.id === subjectId) ?? subjects?.[0]
@@ -52,6 +55,36 @@ export function HomeScreen({ user, onOpenLesson, onAuthError }: Props) {
 
         {error && <p className="form-error">{error}</p>}
         {!subjects && !error && <p className="muted"><LoaderCircle className="spin" size={16} /> Loading your subjects…</p>}
+
+        {homework.length > 0 && (
+          <section className="hw-section" aria-label="Homework">
+            <h2 className="section-title"><ClipboardList size={17} /> Homework</h2>
+            <div className="hw-list">
+              {homework.slice(0, 6).map((item) => {
+                const done = item.status === 'submitted'
+                return (
+                  <article key={item.id} className={`hw-item ${item.overdue ? 'overdue' : ''} ${done ? 'done' : ''}`}>
+                    <div>
+                      <strong>{item.title}</strong>
+                      <span className="muted small">{item.topicTitle} · {item.lessonTitle} · {item.questionCount} questions</span>
+                      <span className="hw-meta">
+                        {done
+                          ? <span className="hw-chip done"><CheckCircle2 size={13} /> {item.score}/{item.total}{item.late ? ' · late' : ''}</span>
+                          : <>
+                              <span className={`hw-chip ${item.overdue ? 'late' : ''}`}>{item.overdue ? 'Overdue' : item.status === 'in_progress' ? 'In progress' : 'To do'}</span>
+                              <span className="muted small">Due {formatDue(item.dueAt)}</span>
+                            </>}
+                      </span>
+                    </div>
+                    <button type="button" className={done ? 'ghost-button' : 'primary-button'} onClick={() => onOpenHomework(item.id)}>
+                      {done ? 'View results' : item.status === 'in_progress' ? 'Continue' : 'Start'}
+                    </button>
+                  </article>
+                )
+              })}
+            </div>
+          </section>
+        )}
 
         {recommended && (
           <section className="recommend-card">

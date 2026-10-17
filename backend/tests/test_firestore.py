@@ -132,3 +132,32 @@ def test_migrated_tokens_support_lookup_and_logout(firestore_store):
     assert firestore_store.find_user_by_email(learner["email"])["id"] == learner["id"]
     firestore_store.delete_token("hash")
     assert firestore_store.get_token_user_id("hash") is None
+
+
+def test_firestore_homework_is_handed_in_once_and_updates_the_model_together(firestore_store):
+    learner = user()
+    firestore_store.create_user(learner, "token")
+    homework = {"id": "hw1", "createdBy": "teacher", "title": "Practice", "lessonId": "comparing-fractions"}
+    firestore_store.save_homework(homework)
+    assert firestore_store.get_homework("hw1")["title"] == "Practice"
+    assert [item["id"] for item in firestore_store.all_homework()] == ["hw1"]
+
+    draft = {"homeworkId": "hw1", "userId": learner["id"], "answers": {"q1": "A"}, "submittedAt": None}
+    assert firestore_store.save_submission(draft) is True
+    assert firestore_store.submissions_for_user(learner["id"])[0]["answers"] == {"q1": "A"}
+    assert [item["userId"] for item in firestore_store.submissions_for_homework("hw1")] == [learner["id"]]
+
+    model = firestore_store.get_model(learner["id"], student_model._new_model)
+    done = {**draft, "submittedAt": "2026-01-01T00:00:00+00:00", "score": 1, "total": 1, "graded": []}
+    event = {"id": "event-1", "userId": learner["id"], "ts": "2026-01-01", "type": "homework_submitted"}
+    with pytest.raises(ConcurrentUpdateError):
+        firestore_store.commit_homework(learner["id"], 99, model, done, [event])
+    assert firestore_store.commit_homework(learner["id"], 0, model, done, [event]) is True
+    assert firestore_store.commit_homework(learner["id"], 1, model, done, [event]) is False
+    assert firestore_store.save_submission({**draft, "answers": {"q1": "B"}}) is False
+    assert firestore_store.get_submission("hw1", learner["id"])["score"] == 1
+    assert firestore_store.get_user(learner["id"])["_learningVersion"] == 1
+    assert len(firestore_store.recent_events(learner["id"], 5)) == 1
+
+    firestore_store.delete_homework("hw1")
+    assert firestore_store.get_homework("hw1") is None

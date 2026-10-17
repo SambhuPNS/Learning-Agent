@@ -1,11 +1,12 @@
 import { useState } from 'react'
-import { BookMarked, GraduationCap, LayoutDashboard, LogOut, Users } from 'lucide-react'
+import { BookMarked, ClipboardList, GraduationCap, LayoutDashboard, LogOut, Users } from 'lucide-react'
 import type { Health, User } from '../../types'
+import { HomeworkView } from './HomeworkView'
 import { OverviewView } from './OverviewView'
 import { StudentsView } from './StudentsView'
 import { TopicsView } from './TopicsView'
 
-type Tab = 'overview' | 'topics' | 'students'
+type Tab = 'overview' | 'topics' | 'homework' | 'students'
 
 export function TeacherApp({ user, health, onSignOut, onAuthError }: { user: User; health: Health | null; onSignOut: () => void; onAuthError: (err: unknown) => void }) {
   const [tab, setTab] = useState<Tab>('overview')
@@ -24,6 +25,7 @@ export function TeacherApp({ user, health, onSignOut, onAuthError }: { user: Use
         <nav>
           <button type="button" className={tab === 'overview' ? 'active' : ''} onClick={() => setTab('overview')}><LayoutDashboard size={17} /> Overview</button>
           <button type="button" className={tab === 'topics' ? 'active' : ''} onClick={() => setTab('topics')}><BookMarked size={17} /> Topics</button>
+          <button type="button" className={tab === 'homework' ? 'active' : ''} onClick={() => setTab('homework')}><ClipboardList size={17} /> Homework</button>
           <button type="button" className={tab === 'students' ? 'active' : ''} onClick={() => setTab('students')}><Users size={17} /> Students</button>
         </nav>
         <p className={`engine-badge ${health?.gemini ? 'live' : ''}`}>
@@ -34,6 +36,7 @@ export function TeacherApp({ user, health, onSignOut, onAuthError }: { user: Use
       <main className="shell-main">
         {tab === 'overview' && <OverviewView onAuthError={onAuthError} />}
         {tab === 'topics' && <TopicsView onAuthError={onAuthError} />}
+        {tab === 'homework' && <HomeworkView onAuthError={onAuthError} />}
         {tab === 'students' && <StudentsView onAuthError={onAuthError} />}
       </main>
     </div>

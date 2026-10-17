@@ -51,7 +51,7 @@ function pauseAfter(step: TutorStep, listened: boolean) {
   return Math.min(25_000, Math.max(listened ? 2500 : 5000, ms))
 }
 
-function ContentBlock({ block }: { block: LessonContent }) {
+export function ContentBlock({ block }: { block: LessonContent }) {
   if (block.type === 'text') return <p>{block.text}</p>
   if (block.type === 'callout') {
     return (

@@ -3,13 +3,14 @@ import { GraduationCap, Home, LoaderCircle, LogOut, SlidersHorizontal, TriangleA
 import { api, ApiError, tokenStore } from './api'
 import { AuthScreen } from './screens/AuthScreen'
 import { HomeScreen } from './screens/HomeScreen'
+import { HomeworkScreen } from './screens/HomeworkScreen'
 import { LessonScreen } from './screens/LessonScreen'
 import { OnboardingScreen } from './screens/OnboardingScreen'
 import { TeacherApp } from './screens/teacher/TeacherApp'
 import type { Health, LessonSummary, User } from './types'
 import './App.css'
 
-type View = 'loading' | 'auth' | 'onboarding' | 'home' | 'lesson' | 'profile'
+type View = 'loading' | 'auth' | 'onboarding' | 'home' | 'lesson' | 'profile' | 'homework'
 
 const landingView = (user: User): View => (user.role === 'teacher' || user.profile ? 'home' : 'onboarding')
 
@@ -17,6 +18,7 @@ function App() {
   const [view, setView] = useState<View>(() => (tokenStore.get() ? 'loading' : 'auth'))
   const [user, setUser] = useState<User | null>(null)
   const [lesson, setLesson] = useState<LessonSummary | null>(null)
+  const [homeworkId, setHomeworkId] = useState<string | null>(null)
   const [health, setHealth] = useState<Health | null>(null)
   const [backendDown, setBackendDown] = useState(false)
 
@@ -43,17 +45,18 @@ function App() {
     }
   }, [])
 
-  // Lessons and the profile page get a browser history entry, so the browser's Back button returns home.
+  // Lessons, homework and the profile page get a browser history entry, so the browser's Back button returns home.
   useEffect(() => {
     const onPop = () => {
       setLesson(null)
-      setView((current) => (current === 'lesson' || current === 'profile' ? 'home' : current))
+      setHomeworkId(null)
+      setView((current) => (current === 'lesson' || current === 'profile' || current === 'homework' ? 'home' : current))
     }
     window.addEventListener('popstate', onPop)
     return () => window.removeEventListener('popstate', onPop)
   }, [])
 
-  const openPage = (page: 'lesson' | 'profile') => {
+  const openPage = (page: 'lesson' | 'profile' | 'homework') => {
     window.history.pushState({ elevate: page }, '')
     setView(page)
   }
@@ -64,6 +67,7 @@ function App() {
       return
     }
     setLesson(null)
+    setHomeworkId(null)
     setView('home')
   }
 
@@ -137,6 +141,15 @@ function App() {
     )
   }
 
+  if (view === 'homework' && homeworkId) {
+    return (
+      <>
+        {banner}
+        <HomeworkScreen key={homeworkId} homeworkId={homeworkId} onAuthError={handleAuthError} onExit={backHome} />
+      </>
+    )
+  }
+
   return (
     <div className="shell">
       {banner}
@@ -165,6 +178,10 @@ function App() {
           onOpenLesson={(selected) => {
             setLesson(selected)
             openPage('lesson')
+          }}
+          onOpenHomework={(id) => {
+            setHomeworkId(id)
+            openPage('homework')
           }}
         />
       </main>

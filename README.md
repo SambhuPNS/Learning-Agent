@@ -1,6 +1,6 @@
 # Elevate Tutor
 
-React/Vite frontend and FastAPI backend, packaged as one Cloud Run service. The backend serves `/api/*` and the built frontend at `/`. Gemini on Vertex AI generates structured lesson steps; React renders the content and predefined visuals.
+React/Vite frontend and FastAPI backend, packaged as one Cloud Run service. The backend serves `/api/*` and the built frontend at `/`. Gemini on Vertex AI generates structured lesson steps; React renders the content and predefined visuals. See the [architecture diagram](docs/architecture.svg) ([PNG](docs/architecture.png)).
 
 ## Local development
 
@@ -50,6 +50,14 @@ One-time setup in the Google Cloud Console (any project, for example the Vertex 
 The client ID is public, not a secret: teammates can reuse it to sign in locally without their own setup. Open the app at exactly `http://localhost:5173`; Google rejects unregistered origins such as `127.0.0.1`.
 
 A first Google sign-in from **Create account** uses the role (and invite code) chosen there; from **Sign in**, new accounts start as students. If a password account already uses that email, Google sign-in links to it and keeps its progress, but removes the password and signs out its other sessions, because anyone could have registered that email with a password.
+
+## Teacher authoring and homework
+
+**Topics.** In **Topics → New topic**, a teacher chooses where the lessons come from: typed text, an uploaded file (PDF, TXT or Markdown, up to 10 MB), or a web page. Gemini drafts lessons from that material and the teacher edits them before publishing. Web pages are fetched by the backend (`POST /api/teacher/topics/fetch-url`) and reduced to readable text with BeautifulSoup. Because the server makes the request, it only accepts `http(s)` on ports 80 and 443, refuses any address that is not public (localhost, private networks and the cloud metadata server), re-checks every redirect (at most 3), and limits pages to 2 MB and HTML or plain text. Pages that need JavaScript or a login cannot be read; paste their text instead.
+
+**Homework.** In **Homework**, a teacher picks a lesson, lets Gemini draft 4-10 questions (multiple choice or a short typed answer), checks every answer, sets a due date and publishes it to all students. Each student has one attempt; late work is accepted and flagged. Answers are marked by the same fixed rules as the tutor, and each answer updates the student model (mastery and misconceptions). Answer keys stay on the server until the student hands in. Before each question the tutor shows a short worked example in the explanation style that works best for that student; it uses a different example from the question and passes the same answer-leak check as lesson steps, and is simply left out if Gemini is unavailable. Each student sees the options in their own stable order. Once students have started, the questions are locked; teachers can still change the title, instructions, due date and visibility. Results show who has handed in, scores per question and the most common mistakes.
+
+Homework is stored in the `homework` and `submissions` Firestore collections (single-field queries only, so no extra index is needed).
 
 ## Guardrails
 

@@ -16,7 +16,7 @@ def document_batches(documents: list[tuple[str, str, dict[str, Any]]], size: int
 
 def load_documents(data: dict[str, Any]) -> list[tuple[str, str, dict[str, Any]]]:
     documents: list[tuple[str, str, dict[str, Any]]] = []
-    for collection in ("users", "sessions", "studentModels", "topics"):
+    for collection in ("users", "sessions", "studentModels", "topics", "homework", "submissions"):
         for document_id, value in data.get(collection, {}).items():
             if not isinstance(value, dict):
                 raise ValueError(f"{collection}/{document_id} must contain a document object.")
@@ -62,7 +62,7 @@ def main() -> None:
     if not args.overwrite:
         populated = [
             collection
-            for collection in ("users", "userEmails", "tokens", "sessions", "studentModels", "topics", "events")
+            for collection in ("users", "userEmails", "tokens", "sessions", "studentModels", "topics", "homework", "submissions", "events")
             if next(db.collection(collection).limit(1).stream(), None)
         ]
         if populated:

@@ -51,7 +51,7 @@ class JsonStore:
 
     @staticmethod
     def migrate(data: dict[str, Any]) -> dict[str, Any]:
-        for key in ("users", "tokens", "sessions", "studentModels"):
+        for key in ("users", "tokens", "sessions", "studentModels", "homework", "submissions"):
             data.setdefault(key, {})
         data.setdefault("events", [])
         topics = data.setdefault("topics", {})
@@ -178,6 +178,79 @@ class FirestoreStore:
 
     def delete_topic(self, topic_id: str) -> None:
         self.db.collection("topics").document(topic_id).delete()
+
+    @staticmethod
+    def _submission_id(homework_id: str, user_id: str) -> str:
+        return f"{homework_id}_{user_id}"
+
+    def all_homework(self) -> list[dict]:
+        return [snapshot.to_dict() for snapshot in self.db.collection("homework").stream()]
+
+    def get_homework(self, homework_id: str) -> dict | None:
+        snapshot = self.db.collection("homework").document(homework_id).get()
+        return snapshot.to_dict() if snapshot.exists else None
+
+    def save_homework(self, homework: dict) -> None:
+        self.db.collection("homework").document(homework["id"]).set(homework)
+
+    def delete_homework(self, homework_id: str) -> None:
+        self.db.collection("homework").document(homework_id).delete()
+
+    def get_submission(self, homework_id: str, user_id: str) -> dict | None:
+        snapshot = self.db.collection("submissions").document(self._submission_id(homework_id, user_id)).get()
+        return snapshot.to_dict() if snapshot.exists else None
+
+    def save_submission(self, submission: dict) -> bool:
+        """Saves work in progress. A submission that has already been handed in is never changed."""
+        from google.cloud import firestore
+
+        ref = self.db.collection("submissions").document(self._submission_id(submission["homeworkId"], submission["userId"]))
+
+        @firestore.transactional
+        def save(transaction):
+            current = next(transaction.get(ref)).to_dict()
+            if current and current.get("submittedAt"):
+                return False
+            transaction.set(ref, submission)
+            return True
+
+        return bool(save(self.db.transaction()))
+
+    def submissions_for_homework(self, homework_id: str) -> list[dict]:
+        from google.cloud.firestore_v1.base_query import FieldFilter
+
+        query = self.db.collection("submissions").where(filter=FieldFilter("homeworkId", "==", homework_id))
+        return [snapshot.to_dict() for snapshot in query.stream()]
+
+    def submissions_for_user(self, user_id: str) -> list[dict]:
+        from google.cloud.firestore_v1.base_query import FieldFilter
+
+        query = self.db.collection("submissions").where(filter=FieldFilter("userId", "==", user_id))
+        return [snapshot.to_dict() for snapshot in query.stream()]
+
+    def commit_homework(self, user_id: str, version: int, model: dict, submission: dict, events: list[dict]) -> bool:
+        """Hands in homework and updates the student model together; False if it was already handed in."""
+        from google.cloud import firestore
+
+        user_ref = self.db.collection("users").document(user_id)
+        sub_ref = self.db.collection("submissions").document(self._submission_id(submission["homeworkId"], user_id))
+
+        @firestore.transactional
+        def commit(transaction):
+            user = next(transaction.get(user_ref)).to_dict()
+            current = next(transaction.get(sub_ref)).to_dict()
+            if current and current.get("submittedAt"):
+                return False
+            if user is None or user.get("_learningVersion", 0) != version:
+                raise ConcurrentUpdateError("Another request changed this learner's progress.")
+            transaction.update(user_ref, {"_learningVersion": version + 1})
+            transaction.set(self.db.collection("studentModels").document(user_id), model)
+            transaction.set(sub_ref, submission)
+            for event in events:
+                transaction.set(self.db.collection("events").document(event["id"]), event)
+            return True
+
+        return bool(commit(self.db.transaction()))
 
     def get_session(self, key: str) -> dict | None:
         snapshot = self.db.collection("sessions").document(key).get()
@@ -310,6 +383,75 @@ class LocalStore(JsonStore):
         with self.lock:
             del self.data["topics"][topic_id]
             self.save()
+
+    def all_homework(self) -> list[dict]:
+        with self.lock:
+            return deepcopy(list(self.data["homework"].values()))
+
+    def get_homework(self, homework_id: str) -> dict | None:
+        with self.lock:
+            return deepcopy(self.data["homework"].get(homework_id))
+
+    def save_homework(self, homework: dict) -> None:
+        with self.lock:
+            self.data["homework"][homework["id"]] = deepcopy(homework)
+            self.save()
+
+    def delete_homework(self, homework_id: str) -> None:
+        with self.lock:
+            self.data["homework"].pop(homework_id, None)
+            self.save()
+
+    @staticmethod
+    def _submission_id(homework_id: str, user_id: str) -> str:
+        return f"{homework_id}_{user_id}"
+
+    def get_submission(self, homework_id: str, user_id: str) -> dict | None:
+        with self.lock:
+            return deepcopy(self.data["submissions"].get(self._submission_id(homework_id, user_id)))
+
+    def save_submission(self, submission: dict) -> bool:
+        """Saves work in progress. A submission that has already been handed in is never changed."""
+        with self.lock:
+            key = self._submission_id(submission["homeworkId"], submission["userId"])
+            current = self.data["submissions"].get(key)
+            if current and current.get("submittedAt"):
+                return False
+            self.data["submissions"][key] = deepcopy(submission)
+            self.save()
+            return True
+
+    def submissions_for_homework(self, homework_id: str) -> list[dict]:
+        with self.lock:
+            return deepcopy([s for s in self.data["submissions"].values() if s["homeworkId"] == homework_id])
+
+    def submissions_for_user(self, user_id: str) -> list[dict]:
+        with self.lock:
+            return deepcopy([s for s in self.data["submissions"].values() if s["userId"] == user_id])
+
+    def commit_homework(self, user_id: str, version: int, model: dict, submission: dict, events: list[dict]) -> bool:
+        """Hands in homework and updates the student model together; False if it was already handed in."""
+        with self.lock:
+            key = self._submission_id(submission["homeworkId"], user_id)
+            current = self.data["submissions"].get(key)
+            if current and current.get("submittedAt"):
+                return False
+            user = self.data["users"].get(user_id)
+            if user is None or user.get("_learningVersion", 0) != version:
+                raise ConcurrentUpdateError("Another request changed this learner's progress.")
+            previous = self.data
+            updated = deepcopy(previous)
+            updated["users"][user_id]["_learningVersion"] = version + 1
+            updated["studentModels"][user_id] = deepcopy(model)
+            updated["submissions"][key] = deepcopy(submission)
+            updated["events"].extend(deepcopy(events))
+            self.data = updated
+            try:
+                self.save()
+            except (OSError, TypeError, ValueError):
+                self.data = previous
+                raise
+            return True
 
     def get_session(self, key: str) -> dict | None:
         with self.lock:
