@@ -203,8 +203,10 @@ export function LessonScreen({
   const speakStep = async (step: TutorStep, force = false) => {
     if (!aliveRef.current) return false
     if (!force && !readAloudRef.current) return true
+    // speak() first stops any earlier line, which clears the speaking marker, so mark this step afterwards.
+    const spoken = voice.speak(step.speechParts?.length ? step.speechParts : step.speech, geminiVoice)
     setSpeakingId(step.id)
-    return voice.speak(step.speechParts?.length ? step.speechParts : step.speech, geminiVoice)
+    return spoken
   }
 
   const cancelAutoNext = () => {
