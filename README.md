@@ -93,8 +93,11 @@ gcloud run deploy elevate \
   --service-account "$RUNTIME_SERVICE_ACCOUNT" \
   --set-env-vars "FIRESTORE_ENABLED=true,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,VERTEX_AI_LOCATION=global,GOOGLE_CLIENT_ID=$GOOGLE_CLIENT_ID" \
   --set-secrets "TEACHER_INVITE_CODE=teacher-invite-code:latest" \
+  --session-affinity \
   --allow-unauthenticated
 ```
+
+`--session-affinity` keeps each browser on the same instance where possible. While a student reads a step, that instance prepares the next step and its audio in memory (`POST /api/tutor/prepare`), so Continue is instant; on another instance the step is simply generated as usual.
 
 Add the deployed service URL to the OAuth client's **Authorized JavaScript origins** (see [Google sign-in](#google-sign-in)). Use a unique deployment tag. Verify the Gemini text/fallback/TTS model IDs and voice are available through Vertex AI in your project/location; configure them as backend environment variables when necessary. Public Cloud Run invocation allows the browser to reach the login page; protected API endpoints still require application authentication. Choose service memory, timeouts, concurrency, and maximum instances for your workload and budget.
 
