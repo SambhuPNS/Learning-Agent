@@ -37,7 +37,8 @@ async def understand_audio(audio_b64: str, mime_type: str, question: dict | None
         options = f" Options: {question['options']}." if question.get("options") else ""
         context = f"Current question: \"{question['prompt']}\".{options}"
     parts = [{"text": context}, {"inlineData": {"mimeType": mime_type, "data": audio_b64}}]
-    result = await gemini.generate_json(UNDERSTAND_SYSTEM, parts, UNDERSTAND_SCHEMA, timeout=15, fast=True)
+    result = await gemini.generate_json(UNDERSTAND_SYSTEM, parts, UNDERSTAND_SCHEMA, timeout=15, fast=True,
+                                         purpose="speech.understand")
     return _finalise(result, question)
 
 

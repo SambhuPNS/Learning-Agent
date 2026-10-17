@@ -175,3 +175,20 @@ def test_firestore_sessions_keep_table_rows(firestore_store):
     assert stored["history"][-1]["content"][0]["visual"]["rows"] == [["1", "2"], ["3", "4"]]
     _, _, again, _ = firestore_store.get_learning_state(learner["id"], "learner:tables", student_model._new_model)
     assert again["history"][-1]["content"][0]["visual"]["rows"] == [["1", "2"], ["3", "4"]]
+
+
+def test_firestore_usage_records_are_saved_newest_first_and_expire(firestore_store):
+    from datetime import datetime, timedelta, timezone
+
+    base = datetime.now(timezone.utc)
+    for index in range(3):
+        firestore_store.save_llm_call({"id": f"call{index}", "ts": (base - timedelta(minutes=index)).isoformat(), "userId": "u",
+                                       "feature": "tutor.step", "model": "m", "totalTokens": 10 + index, "outcome": "ok"})
+    firestore_store.save_llm_call({"id": "old", "ts": (base - timedelta(days=40)).isoformat(), "userId": "u",
+                                   "feature": "tutor.step", "model": "m", "totalTokens": 1, "outcome": "ok"})
+    rows, truncated = firestore_store.llm_calls_since((base - timedelta(days=7)).isoformat(), 10)
+    assert [row["id"] for row in rows] == ["call0", "call1", "call2"] and truncated is False
+    assert "expireAt" not in rows[0]
+    raw = firestore_store.db.collection("llmCalls").document("call0").get().to_dict()
+    assert raw["expireAt"] > base + timedelta(days=29)
+    assert len(firestore_store.llm_calls_since((base - timedelta(days=7)).isoformat(), 2)[0]) == 2

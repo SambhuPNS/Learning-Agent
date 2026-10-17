@@ -2,7 +2,7 @@ import json
 import os
 import threading
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from typing import Any, Callable
 
@@ -10,6 +10,8 @@ from .config import FIRESTORE_ENABLED, STORE_PATH
 from .curriculum import seed_topics
 
 MAX_EVENTS = 20_000
+MAX_LLM_CALLS = 5_000
+LLM_CALL_RETENTION_DAYS = 30
 MAX_SESSION_HISTORY = 64
 MAX_SESSION_BYTES = 750_000
 
@@ -75,6 +77,7 @@ class JsonStore:
         for key in ("users", "tokens", "sessions", "studentModels", "homework", "submissions"):
             data.setdefault(key, {})
         data.setdefault("events", [])
+        data.setdefault("llmCalls", [])
         topics = data.setdefault("topics", {})
         for topic in seed_topics(now_iso()):
             topics.setdefault(topic["id"], topic)
@@ -216,6 +219,24 @@ class FirestoreStore:
 
     def delete_homework(self, homework_id: str) -> None:
         self.db.collection("homework").document(homework_id).delete()
+
+    def save_llm_call(self, record: dict) -> None:
+        # expireAt lets a Firestore TTL policy delete old usage records automatically.
+        expires = datetime.fromisoformat(record["ts"]) + timedelta(days=LLM_CALL_RETENTION_DAYS)
+        self.db.collection("llmCalls").document(record["id"]).set({**record, "expireAt": expires})
+
+    def llm_calls_since(self, since_iso: str, limit: int) -> tuple[list[dict], bool]:
+        from google.cloud import firestore
+        from google.cloud.firestore_v1.base_query import FieldFilter
+
+        query = (self.db.collection("llmCalls").where(filter=FieldFilter("ts", ">=", since_iso))
+                 .order_by("ts", direction=firestore.Query.DESCENDING).limit(limit))
+        rows = []
+        for snapshot in query.stream():
+            row = snapshot.to_dict()
+            row.pop("expireAt", None)
+            rows.append(row)
+        return rows, len(rows) >= limit
 
     def get_submission(self, homework_id: str, user_id: str) -> dict | None:
         snapshot = self.db.collection("submissions").document(self._submission_id(homework_id, user_id)).get()
@@ -422,6 +443,19 @@ class LocalStore(JsonStore):
         with self.lock:
             self.data["homework"].pop(homework_id, None)
             self.save()
+
+    def save_llm_call(self, record: dict) -> None:
+        with self.lock:
+            calls = self.data.setdefault("llmCalls", [])
+            calls.append(deepcopy(record))
+            if len(calls) > MAX_LLM_CALLS:
+                del calls[:len(calls) - MAX_LLM_CALLS]
+            self.save()
+
+    def llm_calls_since(self, since_iso: str, limit: int) -> tuple[list[dict], bool]:
+        with self.lock:
+            rows = [call for call in reversed(self.data.get("llmCalls", [])) if call["ts"] >= since_iso]
+            return deepcopy(rows[:limit]), len(rows) > limit
 
     @staticmethod
     def _submission_id(homework_id: str, user_id: str) -> str:

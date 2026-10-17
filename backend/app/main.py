@@ -5,11 +5,11 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Literal
 
-from fastapi import Depends, FastAPI, HTTPException, Response
+from fastapi import Depends, FastAPI, HTTPException, Query, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
-from . import auth, gemini, homework, speech, student_model, topics, tutor, webpage
+from . import auth, gemini, homework, speech, student_model, topics, tutor, usage, webpage
 from .config import GEMINI_MODEL, GEMINI_TTS_MODEL, GOOGLE_CLIENT_ID, TEACHER_INVITE_CODE, gemini_enabled
 from .curriculum import STARTER_ORDER
 from .store import store
@@ -18,6 +18,22 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(messag
 log = logging.getLogger("tutor.api")
 
 app = FastAPI(title="Elevate Tutor API")
+
+
+class RequestContext:
+    """Starts a usage context for each request, so every Gemini call can be traced to its request and student."""
+
+    def __init__(self, inner) -> None:
+        self.inner = inner
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] == "http":
+            headers = dict(scope["headers"])
+            usage.begin_request(headers.get(b"x-cloud-trace-context", b"").decode("latin-1") or None)
+        await self.inner(scope, receive, send)
+
+
+app.add_middleware(RequestContext)
 
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 MAX_AUDIO_BASE64 = 8_000_000
@@ -243,6 +259,7 @@ def my_insights(user: dict = Depends(auth.current_student)) -> dict:
 
 @app.post("/api/tutor/turn")
 async def tutor_turn(body: TurnIn, user: dict = Depends(auth.current_student)) -> dict:
+    usage.set_ref(body.lessonId)
     meta = body.meta.model_dump() if body.meta else None
     return await tutor.take_turn(user, body.lessonId, body.action, body.text, meta)
 
@@ -250,6 +267,7 @@ async def tutor_turn(body: TurnIn, user: dict = Depends(auth.current_student)) -
 @app.post("/api/tutor/prepare")
 async def tutor_prepare(body: PrepareIn, user: dict = Depends(auth.current_student)) -> dict:
     """Called while the student reads a step: makes the next step and its audio so Continue is instant."""
+    usage.set_ref(body.lessonId)
     step = await tutor.prepare_continue(user, body.lessonId)
     if step is None:
         return {"prepared": False}
@@ -264,6 +282,7 @@ async def tutor_prepare(body: PrepareIn, user: dict = Depends(auth.current_stude
 async def understand(body: UnderstandIn, user: dict = Depends(auth.current_student)) -> dict:
     if not gemini_enabled():
         raise HTTPException(503, "Vertex AI speech understanding is not configured.")
+    usage.set_ref(body.lessonId)
     question = tutor.pending_question(user, body.lessonId)
     try:
         return await speech.understand_audio(body.audio, body.mimeType, question)
@@ -308,6 +327,7 @@ def save_homework_answer(homework_id: str, body: HomeworkAnswerIn, user: dict = 
 
 @app.post("/api/homework/{homework_id}/example")
 async def homework_example(homework_id: str, body: HomeworkExampleIn, user: dict = Depends(auth.current_student)) -> dict:
+    usage.set_ref(homework_id)
     return await homework.example(user, homework_id, body.questionId)
 
 
@@ -346,6 +366,11 @@ async def draft_topic(body: DraftIn, teacher: dict = Depends(auth.current_teache
     return await topics.draft_plan(body.subject, body.title, body.gradeLevel, body.description, file)
 
 
+@app.get("/api/teacher/usage")
+def ai_usage(days: int = Query(7, ge=1, le=30), teacher: dict = Depends(auth.current_teacher)) -> dict:
+    return usage.report(days)
+
+
 @app.get("/api/teacher/homework")
 def teacher_homework(teacher: dict = Depends(auth.current_teacher)) -> dict:
     return {"homework": homework.teacher_list(teacher)}
@@ -353,6 +378,7 @@ def teacher_homework(teacher: dict = Depends(auth.current_teacher)) -> dict:
 
 @app.post("/api/teacher/homework/draft")
 async def draft_homework(body: DraftHomeworkIn, teacher: dict = Depends(auth.current_teacher)) -> dict:
+    usage.set_ref(body.lessonId)
     return await homework.draft_questions(body.lessonId, body.count)
 
 

@@ -274,3 +274,31 @@ export type ClassOverview = {
   misconceptions: { label: string; count: number; share: number }[]
   strategies: { strategy: Strategy; label: string; attempts: number; successRate: number | null }[]
 }
+
+export type UsageGroup = { name: string; calls: number; inputTokens: number; outputTokens: number; thinkingTokens: number; totalTokens: number; avgLatencyMs: number | null }
+export type UsageCall = {
+  id: string
+  ts: string
+  traceId: string | null
+  student: string | null
+  feature: string
+  ref: string | null
+  model: string
+  inputTokens: number
+  outputTokens: number
+  thinkingTokens: number
+  totalTokens: number
+  latencyMs: number
+  outcome: 'ok' | 'blocked' | 'error' | 'cancelled'
+  httpStatus: number | null
+}
+export type UsageReport = {
+  days: number
+  truncated: boolean
+  totals: Omit<UsageGroup, 'name'> & { errors: number; blocked: number; cancelled: number }
+  byFeature: UsageGroup[]
+  byModel: UsageGroup[]
+  byDay: { date: string; calls: number; totalTokens: number }[]
+  byStudent: { userId: string; name: string; calls: number; totalTokens: number }[]
+  recent: UsageCall[]
+}

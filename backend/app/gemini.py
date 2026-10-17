@@ -17,6 +17,7 @@ from google.auth.credentials import Credentials
 from google.auth.exceptions import GoogleAuthError
 from google.auth.transport.requests import Request
 
+from . import usage
 from .config import (
     GEMINI_FALLBACK_MODELS, GEMINI_FAST_MODEL, GEMINI_MODEL, GEMINI_TTS_MODEL, GEMINI_TTS_VOICE,
     GOOGLE_CLOUD_PROJECT, VERTEX_AI_LOCATION,
@@ -58,7 +59,7 @@ def _authorized_headers(url: str) -> dict[str, str]:
     return headers
 
 
-async def _generate(model: str, body: dict, timeout: float, retries: int = 1) -> dict:
+async def _generate(model: str, body: dict, timeout: float, retries: int = 1, purpose: str = "unknown") -> dict:
     if not GOOGLE_CLOUD_PROJECT or not VERTEX_AI_LOCATION:
         raise GeminiError("GOOGLE_CLOUD_PROJECT and VERTEX_AI_LOCATION are required for Vertex AI")
     host = "aiplatform.googleapis.com" if VERTEX_AI_LOCATION == "global" else f"{VERTEX_AI_LOCATION}-aiplatform.googleapis.com"
@@ -75,13 +76,24 @@ async def _generate(model: str, body: dict, timeout: float, retries: int = 1) ->
                     json=body,
                 )
         except GoogleAuthError as exc:
+            usage.record_call(feature=purpose, model=model, started=started, outcome="error")
             raise GeminiError("Vertex AI authentication failed. Configure Application Default Credentials "
                               "locally or attach an authorized runtime service account.") from exc
         except httpx.HTTPError as exc:
+            usage.record_call(feature=purpose, model=model, started=started, outcome="error")
             raise GeminiError(f"Could not reach Vertex AI: {exc}") from exc
+        except asyncio.CancelledError:
+            # A raced backup call that lost: it may still be billed, but its token count never arrives.
+            usage.record_call(feature=purpose, model=model, started=started, outcome="cancelled")
+            raise
         if response.status_code < 400:
             log.info("Vertex AI %s answered in %.1fs", model, time.monotonic() - started)
-            return response.json()
+            data = response.json()
+            blocked = (data.get("promptFeedback") or {}).get("blockReason") or \
+                ((data.get("candidates") or [{}])[0].get("finishReason") in SAFETY_FINISH_REASONS)
+            usage.record_call(feature=purpose, model=model, started=started, outcome="blocked" if blocked else "ok", data=data)
+            return data
+        usage.record_call(feature=purpose, model=model, started=started, outcome="error", http_status=response.status_code)
         if response.status_code in RETRYABLE:
             _cooldown_until[model] = time.monotonic() + COOLDOWN_SECONDS
         if response.status_code not in RETRYABLE or attempt == retries:
@@ -94,28 +106,28 @@ def _cooling(model: str) -> bool:
     return _cooldown_until.get(model, 0) > time.monotonic()
 
 
-async def _generate_with_fallback(body: dict, timeout: float, chain: list[str]) -> dict:
+async def _generate_with_fallback(body: dict, timeout: float, chain: list[str], purpose: str = "unknown") -> dict:
     chain = list(dict.fromkeys(model for model in chain if model))
     # Recently overloaded models go to the back of the queue instead of being retried first.
     models = [m for m in chain if not _cooling(m)] + [m for m in chain if _cooling(m)]
     last_error: GeminiError | None = None
     for model in models:
         try:
-            return await _generate(model, body, timeout, retries=0)
+            return await _generate(model, body, timeout, retries=0, purpose=purpose)
         except GeminiError as exc:
             last_error = exc
             log.warning("Model %s unavailable, trying next: %s", model, str(exc)[:120])
     raise last_error or GeminiError("No Gemini model configured")
 
 
-async def _generate_with_backup(body: dict, timeout: float, backup_after: float) -> dict:
+async def _generate_with_backup(body: dict, timeout: float, backup_after: float, purpose: str = "unknown") -> dict:
     """Asks the main model; if it is slow or fails, also asks the fast model. The first good reply wins."""
     main_chain = [GEMINI_MODEL, *GEMINI_FALLBACK_MODELS]
     if not GEMINI_FAST_MODEL or GEMINI_FAST_MODEL == GEMINI_MODEL:
-        return await _generate_with_fallback(body, timeout, main_chain)
+        return await _generate_with_fallback(body, timeout, main_chain, purpose)
     if _cooling(GEMINI_MODEL):
-        return await _generate_with_fallback(body, timeout, [GEMINI_FAST_MODEL, *main_chain])
-    tasks = {asyncio.create_task(_generate_with_fallback(body, timeout, main_chain))}
+        return await _generate_with_fallback(body, timeout, [GEMINI_FAST_MODEL, *main_chain], purpose)
+    tasks = {asyncio.create_task(_generate_with_fallback(body, timeout, main_chain, purpose))}
     backup_started = False
     last_error: BaseException | None = None
     try:
@@ -129,7 +141,7 @@ async def _generate_with_backup(body: dict, timeout: float, backup_after: float)
             if not backup_started:
                 backup_started = True
                 log.info("%s is %s, asking %s as well", GEMINI_MODEL, "failing" if done else "slow", GEMINI_FAST_MODEL)
-                tasks.add(asyncio.create_task(_generate(GEMINI_FAST_MODEL, body, timeout, retries=0)))
+                tasks.add(asyncio.create_task(_generate(GEMINI_FAST_MODEL, body, timeout, retries=0, purpose=purpose)))
         if last_error is None:
             raise GeminiError("Vertex AI returned no reply")
         raise last_error
@@ -151,9 +163,10 @@ def _parts(data: dict) -> list[dict]:
 
 
 async def generate_json(system: str, parts: list[dict], schema: dict, timeout: float = 60, thinking: str = "low", *,
-                        fast: bool = False, backup_after: float | None = None) -> dict:
+                        fast: bool = False, backup_after: float | None = None, purpose: str = "unknown") -> dict:
     """fast: short classification jobs go to the fast model first.
-    backup_after: if the main model has not answered after this many seconds, ask the fast model too."""
+    backup_after: if the main model has not answered after this many seconds, ask the fast model too.
+    purpose: what the call is for, recorded with its token usage (for example tutor.step)."""
     body = {
         "systemInstruction": {"parts": [{"text": system}]},
         "contents": [{"role": "user", "parts": parts}],
@@ -162,11 +175,11 @@ async def generate_json(system: str, parts: list[dict], schema: dict, timeout: f
         "safetySettings": SAFETY_SETTINGS,
     }
     if backup_after is not None:
-        data = await _generate_with_backup(body, timeout, backup_after)
+        data = await _generate_with_backup(body, timeout, backup_after, purpose)
     elif fast:
-        data = await _generate_with_fallback(body, timeout, [GEMINI_FAST_MODEL, GEMINI_MODEL])
+        data = await _generate_with_fallback(body, timeout, [GEMINI_FAST_MODEL, GEMINI_MODEL], purpose)
     else:
-        data = await _generate_with_fallback(body, timeout, [GEMINI_MODEL, *GEMINI_FALLBACK_MODELS])
+        data = await _generate_with_fallback(body, timeout, [GEMINI_MODEL, *GEMINI_FALLBACK_MODELS], purpose)
     text = "".join(part.get("text", "") for part in _parts(data) if not part.get("thought"))
     try:
         return json.loads(text)
@@ -192,7 +205,7 @@ async def synthesize(text: str) -> bytes:
             "speechConfig": {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": GEMINI_TTS_VOICE}}},
         },
     }
-    data = await _generate(GEMINI_TTS_MODEL, body, timeout=60, retries=2)
+    data = await _generate(GEMINI_TTS_MODEL, body, timeout=60, retries=2, purpose="speech.tts")
     for part in _parts(data):
         inline = part.get("inlineData")
         if not inline:

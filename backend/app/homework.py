@@ -165,7 +165,8 @@ async def draft_questions(lesson_id: str, count: int) -> dict:
                   f"Key ideas:\n- " + "\n- ".join(lesson["keyIdeas"]) + "\n"
                   f"Common misconceptions:\n- " + "\n- ".join(lesson.get("misconceptions", [])) + f"\n\nWrite {count} questions.")
         try:
-            plan = await gemini.generate_json(QUESTIONS_SYSTEM, [{"text": prompt}], QUESTIONS_SCHEMA, timeout=90, thinking="medium")
+            plan = await gemini.generate_json(QUESTIONS_SYSTEM, [{"text": prompt}], QUESTIONS_SCHEMA, timeout=90, thinking="medium",
+                                              purpose="homework.draft")
             drafted = clean_questions(plan.get("questions", []), strict=False)[:count]
             if len(drafted) >= MIN_DRAFT_QUESTIONS:
                 return {"questions": drafted, "source": "gemini"}
@@ -426,7 +427,7 @@ async def _build_example(user: dict, homework: dict, question: dict) -> dict | N
             f"{json.dumps([q['prompt'] for q in homework['questions'] if q['id'] != question['id']], indent=2)}\n\n"
             f"TEACHING STRATEGY: {strategy}. {student_model.STRATEGY_GUIDES[strategy]}")
         raw = await gemini.generate_json(EXAMPLE_SYSTEM, [{"text": prompt}], EXAMPLE_SCHEMA, timeout=EXAMPLE_TIMEOUT_SECONDS,
-                                         backup_after=EXAMPLE_BACKUP_AFTER_SECONDS)
+                                         backup_after=EXAMPLE_BACKUP_AFTER_SECONDS, purpose="homework.example")
         content = blocks.to_content(raw.get("blocks"))
         if not content:
             return None

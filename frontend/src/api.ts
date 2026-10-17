@@ -24,6 +24,7 @@ import type {
   TurnResponse,
   Understanding,
   UploadedFile,
+  UsageReport,
   User,
   WebNotes,
 } from './types'
@@ -108,6 +109,7 @@ export const api = {
     overview: () => json<ClassOverview>('/teacher/overview'),
     students: () => json<{ students: StudentRow[] }>('/teacher/students'),
     student: (id: string) => json<StudentDetail>(`/teacher/students/${encodeURIComponent(id)}`),
+    usage: (days: number) => json<UsageReport>(`/teacher/usage?days=${days}`),
     homework: () => json<{ homework: TeacherHomeworkRow[] }>('/teacher/homework'),
     homeworkDetail: (id: string) => json<TeacherHomework>(`/teacher/homework/${encodeURIComponent(id)}`),
     draftHomework: (lessonId: string, count: number) =>

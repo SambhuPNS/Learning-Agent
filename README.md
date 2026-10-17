@@ -59,6 +59,20 @@ A first Google sign-in from **Create account** uses the role (and invite code) c
 
 Homework is stored in the `homework` and `submissions` Firestore collections (single-field queries only, so no extra index is needed).
 
+## AI usage and traceability
+
+Every Gemini call (lesson steps, answer-leak checks, speech understanding, voice, topic and homework drafting, homework examples) is recorded in one place, `_generate` in `backend/app/gemini.py`, with its token counts from Vertex AI (`usageMetadata`: input, output, thinking, cached and total), the model, the time taken and the outcome (ok, blocked by safety filters, failed or cancelled; a cancelled backup call still bills but its tokens are unknown). Each record also carries the signed-in student or teacher, the feature, the lesson or homework it served, and the request's Cloud Run trace ID. **Records hold metadata only: never prompts, answers or student text.**
+
+- **Cloud Logging.** Each call is written as one structured JSON line with `message: "gemini_usage"` and the trace field, so it appears next to the request's own logs. In Logs Explorer: `resource.type="cloud_run_revision" jsonPayload.message="gemini_usage"`, then add `jsonPayload.userId="..."` or a trace ID to follow one request. A Logging sink to BigQuery can be added later with no code change.
+- **Teacher page.** **AI usage** shows totals, tokens per day, usage by feature, model and student, and the latest calls with their trace IDs (`GET /api/teacher/usage?days=1..30`, teachers only).
+- **Firestore.** Records are stored in the `llmCalls` collection (single-field queries, no extra index) with an `expireAt` timestamp. Enable the expiry policy once per project so records are deleted after 30 days:
+
+```sh
+gcloud firestore fields ttls update expireAt --collection-group=llmCalls --enable-ttl --project YOUR_PROJECT_ID
+```
+
+Saving a record never blocks or fails a lesson: it runs in the background and any error is only logged. No dollar estimate is shown because prices depend on the model and your contract; the token counts are exact.
+
 ## Guardrails
 
 Learners are school students who can type anything, so the tutor is protected in layers:
