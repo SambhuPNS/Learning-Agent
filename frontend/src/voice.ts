@@ -221,9 +221,20 @@ export class TutorVoice {
   private audio?: HTMLAudioElement
   private objectUrl?: string
   private release?: () => void
+  private meterContext?: AudioContext
+  private meterFrame = 0
+  private onLevel?: (level: number) => void
 
   constructor(onSpeakingChange: (speaking: boolean) => void) {
     this.onSpeakingChange = onSpeakingChange
+  }
+
+  /** Reports the loudness (0-1) of Gemini speech while it plays, e.g. to move the genie's mouth. Returns an unsubscribe. */
+  listenToLevel(listener: (level: number) => void): () => void {
+    this.onLevel = listener
+    return () => {
+      if (this.onLevel === listener) this.onLevel = undefined
+    }
   }
 
   /** Resolves true when the line was spoken to the end, false when it was stopped or replaced. */
@@ -257,13 +268,50 @@ export class TutorVoice {
     this.audio = undefined
     this.objectUrl = undefined
     if ('speechSynthesis' in window) window.speechSynthesis.cancel()
+    this.stopMeter()
     this.onSpeakingChange(false)
   }
 
+  private stopMeter() {
+    cancelAnimationFrame(this.meterFrame)
+    this.onLevel?.(0)
+  }
+
+  /** Optional loudness meter. Audio is only routed through Web Audio once that is running, so playback never goes silent. */
+  private meter(audio: HTMLAudioElement) {
+    if (!this.onLevel || typeof AudioContext === 'undefined') return
+    try {
+      this.meterContext ??= new AudioContext()
+      const context = this.meterContext
+      if (context.state !== 'running') {
+        void context.resume()
+        return
+      }
+      const analyser = context.createAnalyser()
+      analyser.fftSize = 512
+      context.createMediaElementSource(audio).connect(analyser)
+      analyser.connect(context.destination)
+      const samples = new Uint8Array(analyser.fftSize)
+      const tick = () => {
+        if (audio.paused || audio.ended) return this.stopMeter()
+        analyser.getByteTimeDomainData(samples)
+        let sum = 0
+        for (const sample of samples) sum += ((sample - 128) / 128) ** 2
+        this.onLevel?.(Math.min(1, Math.sqrt(sum / samples.length) * 5))
+        this.meterFrame = requestAnimationFrame(tick)
+      }
+      audio.addEventListener('playing', () => { this.meterFrame = requestAnimationFrame(tick) }, { once: true })
+    } catch {
+      // Metering is decoration only.
+    }
+  }
+
   private playBlob(blob: Blob): Promise<void> {
+    if (this.objectUrl) URL.revokeObjectURL(this.objectUrl)
     this.objectUrl = URL.createObjectURL(blob)
     const audio = new Audio(this.objectUrl)
     this.audio = audio
+    this.meter(audio)
     return new Promise((resolve) => {
       this.release = resolve
       audio.onended = () => resolve()

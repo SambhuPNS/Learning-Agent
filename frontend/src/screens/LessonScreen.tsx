@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react'
 import {
   ArrowLeft,
   ArrowRight,
@@ -21,6 +21,7 @@ import {
 } from 'lucide-react'
 import { api, ApiError } from '../api'
 import { FractionVisual } from '../components/FractionVisual'
+import { Genie, type GenieMood } from '../components/Genie'
 import { MasteryBar, StrategyBadge } from '../components/Insights'
 import { STRATEGY_LABEL } from '../labels'
 import type { Health, HistoryItem, Learner, LessonContent, LessonState, LessonSummary, TurnAction, TurnMeta, TurnResponse, TutorStep, Understanding, User } from '../types'
@@ -130,6 +131,9 @@ export function LessonScreen({
   const [autoContinue, setAutoContinue] = useState(true)
   const [autoNext, setAutoNext] = useState<{ id: number; ms: number } | null>(null)
   const [speakingId, setSpeakingId] = useState<string | null>(null)
+  const [showGenie, setShowGenie] = useState(() => localStorage.getItem('elevate.genie') !== 'off')
+  const [cheer, setCheer] = useState<'happy' | 'encourage' | null>(null)
+  const [genieAnchor, setGenieAnchor] = useState<HTMLElement | null>(null)
 
   const [voice] = useState(
     () =>
@@ -156,6 +160,8 @@ export function LessonScreen({
   const aliveRef = useRef(true)
   const readyAtRef = useRef(performance.now())
   const feedEndRef = useRef<HTMLDivElement>(null)
+  const mainRef = useRef<HTMLElement>(null)
+  const cheerTimerRef = useRef<number | null>(null)
 
   const geminiVoice = Boolean(health?.gemini)
   const canListen = geminiVoice || browserRecognitionAvailable()
@@ -181,8 +187,17 @@ export function LessonScreen({
       recorderRef.current?.cancel()
       stopRecognitionRef.current?.()
       if (autoTimerRef.current !== null) window.clearTimeout(autoTimerRef.current)
+      if (cheerTimerRef.current !== null) window.clearTimeout(cheerTimerRef.current)
     }
   }, [voice])
+
+  // The genie flies to the newest step, or to the "thinking" card while Gemini works.
+  useLayoutEffect(() => {
+    const feed = mainRef.current
+    if (!feed) return
+    const target = busy ? feed.querySelector('.thinking-card') : [...feed.querySelectorAll('.step-card')].at(-1)
+    setGenieAnchor((target as HTMLElement | null | undefined) ?? null)
+  }, [history.length, busy])
 
   /** Resolves false if the student stopped the tutor mid-sentence or left the lesson. */
   const speakStep = async (step: TutorStep, force = false) => {
@@ -287,6 +302,12 @@ export function LessonScreen({
     if (last?.role !== 'tutor') return
     // While the student reads or listens, have the server prepare the likely next step and its audio.
     if (geminiVoice && !response.state.awaitingAnswer && !response.state.complete) void api.prepare(lesson.id).catch(() => undefined)
+    const feedback = last.step.feedback
+    if (feedback || response.state.complete) {
+      setCheer(feedback && !feedback.correct ? 'encourage' : 'happy')
+      if (cheerTimerRef.current !== null) window.clearTimeout(cheerTimerRef.current)
+      cheerTimerRef.current = window.setTimeout(() => setCheer(null), 2600)
+    }
     const finished = await speakStep(last.step)
     if (!aliveRef.current) return
     // Thinking time starts once the tutor has finished speaking.
@@ -431,6 +452,21 @@ export function LessonScreen({
 
   // Voice input never locks the dock: tapping or typing an answer simply replaces the voice attempt.
   const disabled = busy
+  const genieMood: GenieMood = busy || voiceState === 'thinking' ? 'thinking'
+    : voiceState === 'listening' ? 'listening'
+    : cheer ?? (speakingId ? 'talking' : 'idle')
+  const genieBubble = {
+    thinking: voiceState === 'thinking' ? 'Let me understand…' : 'Hmm, let me think…',
+    listening: "I'm listening…",
+    happy: lessonState?.complete ? 'You did it!' : 'Brilliant!',
+    encourage: 'So close! Try again.',
+    talking: null,
+    idle: question ? 'Your turn!' : null,
+  }[genieMood]
+  const toggleGenie = () => {
+    localStorage.setItem('elevate.genie', showGenie ? 'off' : 'on')
+    setShowGenie(!showGenie)
+  }
   const progressPercent = lessonState ? Math.min(100, Math.round((lessonState.correct / lessonState.target) * 100)) : 0
 
   return (
@@ -448,8 +484,9 @@ export function LessonScreen({
         <button type="button" className="ghost-button" onClick={() => runTurn('restart')} disabled={busy}><RotateCcw size={15} /> Restart</button>
       </header>
 
-      <div className="lesson-layout">
-        <main className="lesson-main">
+      <div className={`lesson-layout ${showGenie ? 'with-genie' : ''}`}>
+        {showGenie && <Genie mood={genieMood} bubble={genieBubble} anchor={genieAnchor} lane={mainRef} voice={voice} micLevel={level} />}
+        <main className="lesson-main" ref={mainRef}>
           <div className="feed" aria-live="polite">
             {history.map((item, index) =>
               item.role === 'student' ? (
@@ -604,6 +641,10 @@ export function LessonScreen({
             <label className="switch-row">
               <span><FastForward size={16} /> Keep teaching automatically</span>
               <input type="checkbox" role="switch" checked={autoContinue} onChange={toggleAutoContinue} />
+            </label>
+            <label className="switch-row">
+              <span><Sparkles size={16} /> Show the genie</span>
+              <input type="checkbox" role="switch" checked={showGenie} onChange={toggleGenie} />
             </label>
             <p className="rail-note">
               {autoContinue && 'Your tutor keeps teaching and waits when it asks you something. Type or tap the mic any time to jump in. '}
