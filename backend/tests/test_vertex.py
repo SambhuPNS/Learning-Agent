@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import json
+import time
 from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock
 
@@ -138,3 +139,68 @@ def test_vertex_tts_returns_wav(vertex, monkeypatch):
     audio = asyncio.run(gemini.synthesize("Hello"))
     assert audio[:4] == b"RIFF"
     assert audio.endswith(pcm)
+
+
+def _reply(text: str) -> httpx.Response:
+    return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": text}]}}]})
+
+
+def _model_of(request: httpx.Request) -> str:
+    return request.url.path.rsplit("/", 1)[-1].split(":")[0]
+
+
+@pytest.fixture
+def two_models(vertex, monkeypatch):
+    monkeypatch.setattr(gemini, "GEMINI_MODEL", "main")
+    monkeypatch.setattr(gemini, "GEMINI_FALLBACK_MODELS", [])
+    monkeypatch.setattr(gemini, "GEMINI_FAST_MODEL", "fast")
+
+
+def test_slow_main_model_is_backed_up_by_fast_model(two_models, monkeypatch):
+    calls = []
+
+    async def handler(request):
+        calls.append(_model_of(request))
+        if _model_of(request) == "main":
+            await asyncio.sleep(5)
+            return _reply('{"from": "main"}')
+        return _reply('{"from": "fast"}')
+
+    mock_transport(monkeypatch, handler)
+    started = time.monotonic()
+    result = asyncio.run(gemini.generate_json("S", [{"text": "Q"}], {"type": "object"}, backup_after=0.05))
+    assert result == {"from": "fast"}
+    assert calls == ["main", "fast"]
+    assert time.monotonic() - started < 2
+
+
+def test_quick_main_model_reply_does_not_ask_backup(two_models, monkeypatch):
+    calls = []
+    mock_transport(monkeypatch, lambda request: calls.append(_model_of(request)) or _reply('{"from": "main"}'))
+    assert asyncio.run(gemini.generate_json("S", [{"text": "Q"}], {"type": "object"}, backup_after=5)) == {"from": "main"}
+    assert calls == ["main"]
+
+
+def test_failing_main_model_switches_to_fast_model_at_once(two_models, monkeypatch):
+    def handler(request):
+        if _model_of(request) == "main":
+            return httpx.Response(503, json={"error": {"message": "Overloaded"}})
+        return _reply('{"from": "fast"}')
+
+    mock_transport(monkeypatch, handler)
+    assert asyncio.run(gemini.generate_json("S", [{"text": "Q"}], {"type": "object"}, backup_after=30)) == {"from": "fast"}
+    assert "main" in gemini._cooldown_until
+
+
+def test_fast_jobs_fall_back_to_main_model(two_models, monkeypatch):
+    calls = []
+
+    def handler(request):
+        calls.append(_model_of(request))
+        if _model_of(request) == "fast":
+            return httpx.Response(404, json={"error": {"message": "Publisher model not found"}})
+        return _reply('{"from": "main"}')
+
+    mock_transport(monkeypatch, handler)
+    assert asyncio.run(gemini.generate_json("S", [{"text": "Q"}], {"type": "object"}, fast=True)) == {"from": "main"}
+    assert calls == ["fast", "main"]

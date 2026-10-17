@@ -1,6 +1,8 @@
 """Speech understanding: transcribe the student's reply and extract their intent and answer."""
 
+import asyncio
 import hashlib
+import re
 from collections import OrderedDict
 
 from . import answers, gemini
@@ -18,7 +20,7 @@ UNDERSTAND_SCHEMA = {
     "required": ["transcript", "intent", "answer", "question"],
 }
 
-UNDERSTAND_SYSTEM = """You listen to a school student speaking to their maths tutor app.
+UNDERSTAND_SYSTEM = """You listen to a school student speaking to their tutor app.
 Transcribe exactly what they said, then work out what they want:
 - answer: they are answering the current question (even casually, e.g. "umm I think it's a half")
 - hint: they want a hint or are stuck
@@ -35,7 +37,7 @@ async def understand_audio(audio_b64: str, mime_type: str, question: dict | None
         options = f" Options: {question['options']}." if question.get("options") else ""
         context = f"Current question: \"{question['prompt']}\".{options}"
     parts = [{"text": context}, {"inlineData": {"mimeType": mime_type, "data": audio_b64}}]
-    result = await gemini.generate_json(UNDERSTAND_SYSTEM, parts, UNDERSTAND_SCHEMA, timeout=45)
+    result = await gemini.generate_json(UNDERSTAND_SYSTEM, parts, UNDERSTAND_SCHEMA, timeout=15, fast=True)
     return _finalise(result, question)
 
 
@@ -60,7 +62,7 @@ def _finalise(result: dict, question: dict | None) -> dict:
 
 
 class AudioCache:
-    def __init__(self, size: int = 64) -> None:
+    def __init__(self, size: int = 96) -> None:
         self.size = size
         self.items: OrderedDict[str, bytes] = OrderedDict()
 
@@ -82,3 +84,41 @@ class AudioCache:
 
 
 audio_cache = AudioCache()
+_synthesizing: dict[str, asyncio.Task] = {}
+SPLIT_SPEECH_FROM = 140
+MIN_PART = 20
+MAX_PARTS = 3
+
+
+def speech_parts(text: str) -> list[str]:
+    """Splits longer speech at sentence ends into up to three parts. All parts are synthesized at once; the short
+    opening plays while the rest is made, and the middle part covers the time the longer remainder takes."""
+    text = " ".join(text.split())
+    if len(text) < SPLIT_SPEECH_FROM:
+        return [text]
+    parts: list[str] = []
+    current = ""
+    for sentence in re.split(r"(?<=[.!?])\s+", text):
+        current = f"{current} {sentence}".strip()
+        if len(parts) < MAX_PARTS - 1 and len(current) >= MIN_PART:
+            parts.append(current)
+            current = ""
+    if current:
+        parts.append(current)
+    return parts
+
+
+async def cached_audio(text: str) -> bytes:
+    """Speech for `text`, from the cache or from Vertex AI; a second request for the same text waits for the first."""
+    audio = audio_cache.get(text)
+    if audio is not None:
+        return audio
+    key = audio_cache.key(text)
+    task = _synthesizing.get(key)
+    if task is None:
+        task = asyncio.create_task(gemini.synthesize(text))
+        _synthesizing[key] = task
+        task.add_done_callback(lambda _done: _synthesizing.pop(key, None))
+    audio = await asyncio.shield(task)
+    audio_cache.put(text, audio)
+    return audio

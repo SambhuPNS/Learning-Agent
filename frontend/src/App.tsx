@@ -43,6 +43,30 @@ function App() {
     }
   }, [])
 
+  // Lessons and the profile page get a browser history entry, so the browser's Back button returns home.
+  useEffect(() => {
+    const onPop = () => {
+      setLesson(null)
+      setView((current) => (current === 'lesson' || current === 'profile' ? 'home' : current))
+    }
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [])
+
+  const openPage = (page: 'lesson' | 'profile') => {
+    window.history.pushState({ elevate: page }, '')
+    setView(page)
+  }
+
+  const backHome = () => {
+    if ((window.history.state as { elevate?: string } | null)?.elevate) {
+      window.history.back()
+      return
+    }
+    setLesson(null)
+    setView('home')
+  }
+
   const signOut = async () => {
     await api.logout().catch(() => undefined)
     tokenStore.clear()
@@ -88,9 +112,10 @@ function App() {
     return (
       <OnboardingScreen
         user={user}
+        onCancel={view === 'profile' ? backHome : undefined}
         onDone={(updated) => {
           setUser(updated)
-          setView('home')
+          backHome()
         }}
       />
     )
@@ -106,10 +131,7 @@ function App() {
           lesson={lesson}
           health={health}
           onAuthError={handleAuthError}
-          onExit={() => {
-            setLesson(null)
-            setView('home')
-          }}
+          onExit={backHome}
         />
       </>
     )
@@ -121,7 +143,7 @@ function App() {
       <aside className="sidebar">
         <div className="brand-mark">
           <span className="brand-icon"><GraduationCap size={21} /></span>
-          <strong>brightpath</strong>
+          <strong>elevate</strong>
         </div>
         <div className="learner-card">
           <span className="avatar-initial">{user.name.charAt(0).toUpperCase()}</span>
@@ -129,7 +151,7 @@ function App() {
         </div>
         <nav>
           <button type="button" className="active"><Home size={17} /> Learn</button>
-          <button type="button" onClick={() => setView('profile')}><SlidersHorizontal size={17} /> Learning profile</button>
+          <button type="button" onClick={() => openPage('profile')}><SlidersHorizontal size={17} /> Learning profile</button>
         </nav>
         <p className={`engine-badge ${health?.gemini ? 'live' : ''}`}>
           {health?.gemini ? `Vertex AI · ${health.model}` : 'Mock tutor (no GCP project configured)'}
@@ -142,7 +164,7 @@ function App() {
           onAuthError={handleAuthError}
           onOpenLesson={(selected) => {
             setLesson(selected)
-            setView('lesson')
+            openPage('lesson')
           }}
         />
       </main>

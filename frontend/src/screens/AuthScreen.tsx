@@ -57,7 +57,7 @@ export function AuthScreen({ onAuthed, inviteRequired, googleClientId }: {
       <section className="auth-intro">
         <div className="brand-mark light">
           <span className="brand-icon"><GraduationCap size={22} /></span>
-          <strong>brightpath</strong>
+          <strong>elevate</strong>
         </div>
         <h1>A tutor that learns how you learn.</h1>
         <p>Short lessons that explain first, then check your thinking. Answer by typing or just talk to your tutor.</p>
@@ -68,64 +68,56 @@ export function AuthScreen({ onAuthed, inviteRequired, googleClientId }: {
         </ul>
       </section>
 
-      {googleClientId ? (
-        <div className="auth-card">
-          <h2>Welcome to brightpath</h2>
-          <p className="auth-note">New here? Choose student or teacher, then continue with Google. Already have an account? Just continue.</p>
-          {rolePicker}
-          {role === 'teacher' && inviteRequired && (
-            <label>
-              Teacher invite code (first sign-in only)
-              <input value={inviteCode} onChange={(e) => setInviteCode(e.target.value)} maxLength={64} autoComplete="off" />
-            </label>
-          )}
-          {error && <p className="form-error" role="alert">{error}</p>}
-          <GoogleSignInButton clientId={googleClientId} onCredential={continueWithGoogle} onError={setError} />
-          {busy && <p className="muted"><LoaderCircle className="spin" size={16} /> Signing you in…</p>}
+      <form className="auth-card" onSubmit={submit}>
+        <div className="segmented" role="tablist">
+          <button type="button" role="tab" aria-selected={mode === 'signup'} className={mode === 'signup' ? 'active' : ''} onClick={() => setMode('signup')}>Create account</button>
+          <button type="button" role="tab" aria-selected={mode === 'login'} className={mode === 'login' ? 'active' : ''} onClick={() => setMode('login')}>Sign in</button>
         </div>
-      ) : (
-        <form className="auth-card" onSubmit={submit}>
-          <div className="segmented" role="tablist">
-            <button type="button" role="tab" aria-selected={mode === 'signup'} className={mode === 'signup' ? 'active' : ''} onClick={() => setMode('signup')}>Create account</button>
-            <button type="button" role="tab" aria-selected={mode === 'login'} className={mode === 'login' ? 'active' : ''} onClick={() => setMode('login')}>Sign in</button>
-          </div>
-          <h2>{mode === 'signup' ? 'Create your account' : 'Welcome back'}</h2>
-          {mode === 'signup' && rolePicker}
-          {mode === 'signup' && (
-            <label>
-              Your name
-              <input value={name} onChange={(e) => setName(e.target.value)} required maxLength={60} autoComplete="name" placeholder="Maya Rao" />
-            </label>
-          )}
+        <h2>{mode === 'signup' ? 'Create your account' : 'Welcome back'}</h2>
+        {mode === 'signup' && rolePicker}
+        {mode === 'signup' && (
           <label>
-            Email
-            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete="email" placeholder="you@example.com" />
+            Your name
+            <input value={name} onChange={(e) => setName(e.target.value)} required maxLength={60} autoComplete="name" placeholder="Maya Rao" />
           </label>
+        )}
+        <label>
+          Email
+          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete="email" placeholder="you@example.com" />
+        </label>
+        <label>
+          Password
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+            minLength={mode === 'signup' ? 8 : 1}
+            autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
+            placeholder={mode === 'signup' ? 'At least 8 characters' : ''}
+          />
+        </label>
+        {mode === 'signup' && role === 'teacher' && inviteRequired && (
           <label>
-            Password
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-              minLength={mode === 'signup' ? 8 : 1}
-              autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
-              placeholder={mode === 'signup' ? 'At least 8 characters' : ''}
-            />
+            Teacher invite code
+            <input value={inviteCode} onChange={(e) => setInviteCode(e.target.value)} required maxLength={64} autoComplete="off" />
           </label>
-          {mode === 'signup' && role === 'teacher' && inviteRequired && (
-            <label>
-              Teacher invite code
-              <input value={inviteCode} onChange={(e) => setInviteCode(e.target.value)} required maxLength={64} autoComplete="off" />
-            </label>
-          )}
-          {error && <p className="form-error" role="alert">{error}</p>}
-          <button className="primary-button wide" type="submit" disabled={busy}>
-            {busy && <LoaderCircle className="spin" size={17} />}
-            {mode === 'signup' ? `Create ${role} account` : 'Sign in'}
-          </button>
-        </form>
-      )}
+        )}
+        {error && <p className="form-error" role="alert">{error}</p>}
+        <button className="primary-button wide" type="submit" disabled={busy}>
+          {busy && <LoaderCircle className="spin" size={17} />}
+          {mode === 'signup' ? `Create ${role} account` : 'Sign in'}
+        </button>
+        {googleClientId && (
+          <>
+            <div className="auth-divider">or</div>
+            <GoogleSignInButton clientId={googleClientId} onCredential={continueWithGoogle} onError={setError} />
+            {mode === 'signup' && (
+              <p className="auth-note">A new Google account uses the role{inviteRequired && role === 'teacher' ? ' and invite code' : ''} chosen above.</p>
+            )}
+          </>
+        )}
+      </form>
     </div>
   )
 }

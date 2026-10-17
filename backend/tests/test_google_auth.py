@@ -78,8 +78,8 @@ def test_first_google_sign_in_creates_account_and_later_ones_reuse_it():
     assert me.json()["id"] == user["id"]
 
     password = {"name": "Pat", "email": "pat@example.com", "password": "secret123"}
-    assert client.post("/api/auth/signup", json=password).status_code == 403
-    assert client.post("/api/auth/login", json=password).status_code == 403
+    assert client.post("/api/auth/signup", json=password).status_code == 200
+    assert client.post("/api/auth/login", json=password).status_code == 200
 
 
 def test_invalid_google_credentials_are_rejected(monkeypatch):
@@ -107,7 +107,15 @@ def test_teacher_invite_and_existing_accounts(monkeypatch):
     assert sign_in(teacher).json()["user"]["role"] == "teacher"
     assert sign_in(credential(sub="someone-else", email="teacher@school.org")).status_code == 401
 
-    monkeypatch.setattr(auth, "GOOGLE_CLIENT_ID", "")
-    legacy = client.post("/api/auth/signup", json={"name": "Leo", "email": "leo@gmail.com", "password": "secret123"})
-    monkeypatch.setattr(auth, "GOOGLE_CLIENT_ID", CLIENT_ID)
-    assert sign_in(credential(sub="google-leo", email="leo@gmail.com")).json()["user"]["id"] == legacy.json()["user"]["id"]
+
+def test_google_takes_over_a_password_account_with_the_same_email():
+    details = {"name": "Leo", "email": "leo@gmail.com", "password": "secret123"}
+    legacy = client.post("/api/auth/signup", json=details).json()
+    old_session = {"Authorization": f"Bearer {legacy['token']}"}
+
+    linked = sign_in(credential(sub="google-leo", email="leo@gmail.com")).json()
+    assert linked["user"]["id"] == legacy["user"]["id"]
+    assert client.get("/api/me", headers=old_session).status_code == 401
+    assert client.post("/api/auth/login", json=details).status_code == 401
+    assert client.get("/api/me", headers={"Authorization": f"Bearer {linked['token']}"}).status_code == 200
+    assert client.post("/api/auth/signup", json=details).status_code == 409

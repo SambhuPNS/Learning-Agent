@@ -2,6 +2,11 @@ import { api } from './api'
 
 const TARGET_SAMPLE_RATE = 16000
 const VOICE_THRESHOLD = 0.018
+// The first moments set the room's noise level; speech must be clearly louder for a couple of frames.
+const CALIBRATION_MS = 300
+const LOUD_SPEECH = 0.08
+const NOISE_MARGIN = 2.5
+const SPEECH_FRAMES = 2
 const SILENCE_AFTER_SPEECH_MS = 1300
 const NO_SPEECH_TIMEOUT_MS = 8000
 const MAX_RECORDING_MS = 15000
@@ -65,15 +70,24 @@ export class UtteranceRecorder {
   private processor?: ScriptProcessorNode
   private chunks: Float32Array[] = []
   private resolve?: (recording: Recording | null) => void
+  private cancelled = false
   private startedAt = 0
   private lastVoiceAt = 0
   private firstVoiceAt = 0
   private heardSpeech = false
+  private noiseLevels: number[] = []
+  private loudFrames = 0
+  private loudSince = 0
 
   async start(onLevel: (level: number) => void): Promise<Recording | null> {
     this.stream = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
     })
+    // Cancelled while the browser was still opening the microphone.
+    if (this.cancelled) {
+      this.stream.getTracks().forEach((track) => track.stop())
+      return null
+    }
     this.context = new AudioContext()
     const source = this.context.createMediaStreamSource(this.stream)
     this.processor = this.context.createScriptProcessor(4096, 1, 1)
@@ -89,10 +103,20 @@ export class UtteranceRecorder {
       onLevel(Math.min(1, rms * 9))
 
       const now = performance.now()
-      if (rms > VOICE_THRESHOLD) {
-        if (!this.heardSpeech) this.firstVoiceAt = now
-        this.heardSpeech = true
-        this.lastVoiceAt = now
+      const calibrating = now - this.startedAt < CALIBRATION_MS
+      if (calibrating && rms <= LOUD_SPEECH) this.noiseLevels.push(rms)
+      const noise = this.noiseLevels.length ? this.noiseLevels.reduce((total, value) => total + value, 0) / this.noiseLevels.length : 0
+      const threshold = calibrating ? LOUD_SPEECH : Math.max(VOICE_THRESHOLD, noise * NOISE_MARGIN)
+      if (rms > threshold) {
+        if (this.loudFrames === 0) this.loudSince = now
+        this.loudFrames++
+        if (this.heardSpeech || this.loudFrames >= SPEECH_FRAMES) {
+          if (!this.heardSpeech) this.firstVoiceAt = this.loudSince
+          this.heardSpeech = true
+          this.lastVoiceAt = now
+        }
+      } else {
+        this.loudFrames = 0
       }
       if (this.heardSpeech && now - this.lastVoiceAt > SILENCE_AFTER_SPEECH_MS) this.finish(true)
       else if (!this.heardSpeech && now - this.startedAt > NO_SPEECH_TIMEOUT_MS) this.finish(false)
@@ -111,6 +135,7 @@ export class UtteranceRecorder {
   }
 
   cancel() {
+    this.cancelled = true
     this.finish(false)
   }
 
@@ -196,27 +221,39 @@ export class TutorVoice {
   private audio?: HTMLAudioElement
   private objectUrl?: string
   private release?: () => void
+  private meterContext?: AudioContext
+  private meterFrame = 0
+  private onLevel?: (level: number) => void
 
   constructor(onSpeakingChange: (speaking: boolean) => void) {
     this.onSpeakingChange = onSpeakingChange
   }
 
-  async speak(text: string, useGemini: boolean): Promise<void> {
+  /** Reports the loudness (0-1) of Gemini speech while it plays, e.g. to move the genie's mouth. Returns an unsubscribe. */
+  listenToLevel(listener: (level: number) => void): () => void {
+    this.onLevel = listener
+    return () => {
+      if (this.onLevel === listener) this.onLevel = undefined
+    }
+  }
+
+  /** Resolves true when the line was spoken to the end, false when it was stopped or replaced. */
+  async speak(text: string | string[], useGemini: boolean): Promise<boolean> {
     this.stop()
     const token = ++this.token
+    const parts = (Array.isArray(text) ? text : [text]).filter((part) => part.trim())
     this.onSpeakingChange(true)
     try {
-      if (useGemini) {
-        try {
-          const blob = await api.synthesize(text)
-          if (token !== this.token) return
-          await this.playBlob(blob)
-          return
-        } catch {
-          if (token !== this.token) return
-        }
+      // Ask for every part at once: the short first part plays while the rest is still being made.
+      const audio = useGemini ? parts.map((part) => api.synthesize(part).then((blob) => blob, () => null)) : []
+      for (const [index, part] of parts.entries()) {
+        const blob = useGemini ? await audio[index] : null
+        if (token !== this.token) return false
+        if (blob) await this.playBlob(blob)
+        else await this.speakWithBrowser(part, token)
+        if (token !== this.token) return false
       }
-      await this.speakWithBrowser(text, token)
+      return true
     } finally {
       if (token === this.token) this.onSpeakingChange(false)
     }
@@ -231,13 +268,50 @@ export class TutorVoice {
     this.audio = undefined
     this.objectUrl = undefined
     if ('speechSynthesis' in window) window.speechSynthesis.cancel()
+    this.stopMeter()
     this.onSpeakingChange(false)
   }
 
+  private stopMeter() {
+    cancelAnimationFrame(this.meterFrame)
+    this.onLevel?.(0)
+  }
+
+  /** Optional loudness meter. Audio is only routed through Web Audio once that is running, so playback never goes silent. */
+  private meter(audio: HTMLAudioElement) {
+    if (!this.onLevel || typeof AudioContext === 'undefined') return
+    try {
+      this.meterContext ??= new AudioContext()
+      const context = this.meterContext
+      if (context.state !== 'running') {
+        void context.resume()
+        return
+      }
+      const analyser = context.createAnalyser()
+      analyser.fftSize = 512
+      context.createMediaElementSource(audio).connect(analyser)
+      analyser.connect(context.destination)
+      const samples = new Uint8Array(analyser.fftSize)
+      const tick = () => {
+        if (audio.paused || audio.ended) return this.stopMeter()
+        analyser.getByteTimeDomainData(samples)
+        let sum = 0
+        for (const sample of samples) sum += ((sample - 128) / 128) ** 2
+        this.onLevel?.(Math.min(1, Math.sqrt(sum / samples.length) * 5))
+        this.meterFrame = requestAnimationFrame(tick)
+      }
+      audio.addEventListener('playing', () => { this.meterFrame = requestAnimationFrame(tick) }, { once: true })
+    } catch {
+      // Metering is decoration only.
+    }
+  }
+
   private playBlob(blob: Blob): Promise<void> {
+    if (this.objectUrl) URL.revokeObjectURL(this.objectUrl)
     this.objectUrl = URL.createObjectURL(blob)
     const audio = new Audio(this.objectUrl)
     this.audio = audio
+    this.meter(audio)
     return new Promise((resolve) => {
       this.release = resolve
       audio.onended = () => resolve()

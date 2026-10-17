@@ -1,4 +1,4 @@
-# Brightpath Tutor
+# Elevate Tutor
 
 React/Vite frontend and FastAPI backend, packaged as one Cloud Run service. The backend serves `/api/*` and the built frontend at `/`. Gemini on Vertex AI generates structured lesson steps; React renders the content and predefined visuals.
 
@@ -10,9 +10,12 @@ To enable AI, set `GOOGLE_CLOUD_PROJECT` to your billing-enabled GCP project,
 enable `aiplatform.googleapis.com`, and run `gcloud auth application-default login`.
 Your ADC identity needs Vertex AI access, typically `roles/aiplatform.user`.
 Set `VERTEX_AI_LOCATION` (default `global`) and the `GEMINI_MODEL`,
-`GEMINI_FALLBACK_MODELS`, `GEMINI_TTS_MODEL`, and `GEMINI_TTS_VOICE` selections to
+`GEMINI_FALLBACK_MODELS`, `GEMINI_FAST_MODEL`, `GEMINI_TTS_MODEL`, and `GEMINI_TTS_VOICE` selections to
 values available in that project/location. The default text model is
-`gemini-3.8-flash`; no fallback models are enabled by default. Leave
+`gemini-3.8-flash`; no fallback models are enabled by default. `GEMINI_FAST_MODEL`
+(default `gemini-3.5-flash-lite`) understands spoken answers and runs the answer-leak
+check, and is also asked for a lesson step when the main model has not answered within
+8 seconds; whichever replies first is used. Leave
 `GOOGLE_CLOUD_PROJECT` empty for the scripted mock tutor. `GEMINI_API_KEY` is no
 longer used. The client refreshes ADC tokens automatically, outside the async
 event loop. Existing `gemini` health/source fields and internal names are retained
@@ -36,7 +39,7 @@ The Vite development server proxies `/api` to port 8000. Production uses the sam
 
 ## Google sign-in
 
-Without `GOOGLE_CLIENT_ID`, the app uses local email/password accounts, so it runs with no Google setup. Once it is set, students and teachers sign in only with Google: password sign-up and sign-in are turned off, and the backend checks each Google ID token's signature, audience, expiry, and verified email.
+Email/password accounts always work, so the app runs with no Google setup. Setting `GOOGLE_CLIENT_ID` adds **Continue with Google** alongside them; the backend checks each Google ID token's signature, audience, expiry, and verified email.
 
 One-time setup in the Google Cloud Console (any project, for example the Vertex AI one):
 
@@ -46,7 +49,7 @@ One-time setup in the Google Cloud Console (any project, for example the Vertex 
 
 The client ID is public, not a secret: teammates can reuse it to sign in locally without their own setup. Open the app at exactly `http://localhost:5173`; Google rejects unregistered origins such as `127.0.0.1`.
 
-On first sign-in, users choose Student or Teacher, plus the invite code when `TEACHER_INVITE_CODE` is set; later sign-ins keep the original role. Accounts created earlier with a password are matched by their verified Google email, so their progress is kept.
+A first Google sign-in from **Create account** uses the role (and invite code) chosen there; from **Sign in**, new accounts start as students. If a password account already uses that email, Google sign-in links to it and keeps its progress, but removes the password and signs out its other sessions, because anyone could have registered that email with a password.
 
 ## Guardrails
 
@@ -80,18 +83,21 @@ REGION=YOUR_REGION
 REPOSITORY=YOUR_ARTIFACT_REPOSITORY
 RUNTIME_SERVICE_ACCOUNT=YOUR_RUNTIME_SERVICE_ACCOUNT_EMAIL
 GOOGLE_CLIENT_ID=YOUR_OAUTH_CLIENT_ID
-IMAGE="$REGION-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/brightpath:DEPLOYMENT_TAG"
+IMAGE="$REGION-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/elevate:DEPLOYMENT_TAG"
 
 gcloud builds submit --project "$PROJECT_ID" --tag "$IMAGE" .
-gcloud run deploy brightpath \
+gcloud run deploy elevate \
   --project "$PROJECT_ID" \
   --region "$REGION" \
   --image "$IMAGE" \
   --service-account "$RUNTIME_SERVICE_ACCOUNT" \
   --set-env-vars "FIRESTORE_ENABLED=true,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,VERTEX_AI_LOCATION=global,GOOGLE_CLIENT_ID=$GOOGLE_CLIENT_ID" \
   --set-secrets "TEACHER_INVITE_CODE=teacher-invite-code:latest" \
+  --session-affinity \
   --allow-unauthenticated
 ```
+
+`--session-affinity` keeps each browser on the same instance where possible. While a student reads a step, that instance prepares the next step and its audio in memory (`POST /api/tutor/prepare`), so Continue is instant; on another instance the step is simply generated as usual.
 
 Add the deployed service URL to the OAuth client's **Authorized JavaScript origins** (see [Google sign-in](#google-sign-in)). Use a unique deployment tag. Verify the Gemini text/fallback/TTS model IDs and voice are available through Vertex AI in your project/location; configure them as backend environment variables when necessary. Public Cloud Run invocation allows the browser to reach the login page; protected API endpoints still require application authentication. Choose service memory, timeouts, concurrency, and maximum instances for your workload and budget.
 
@@ -105,9 +111,31 @@ If another request changes the learner during generation, the stale turn returns
 
 Sessions retain the most recent 64 history entries, with an additional 750 KB UTF-8 JSON budget below Firestore's 1 MiB document limit. Total tutor-step counts, pending questions, and accumulated mastery are retained. Older cards are no longer returned in lesson history; event records remain separate. An individually oversized step is rejected with HTTP 413 rather than losing the pending activity.
 
+## Starter topics and demo data
+
+Elevate ships with five starter topics: Fractions and Decimals & percentages (Mathematics), Photosynthesis and The water cycle (Science), and Parts of speech (English). Each is a lesson plan of key ideas and common misconceptions that Gemini teaches from. On start-up the app adds any starter topic that is missing from storage, and leaves existing topics, including edited ones, alone.
+
+`backend/scripts/seed_demo.py` adds sign-ins and a class with realistic history, so the teacher dashboards and student insights have something to show:
+
+- `priya.menon@lakeview.example`: a teacher.
+- `riya.sharma@lakeview.example`: a student with about a week of history. She chose visual explanations at sign-up, but her answers show that real-life examples work better.
+- `kiran.rao@lakeview.example`: a new student who goes through the sign-up questions.
+- 12 more students with two weeks of progress, mistakes and teaching-style results. Each simulated answer goes through the real student model. They cannot sign in.
+
+The reserved `.example` domain means these addresses can never belong to a real person; pass `--email-domain` to use another. All three sign-ins use the password you pass. Share it privately, for example in the hackathon submission notes, never in this repository. The script only creates what is missing, so running it again is safe.
+
+```sh
+# Local JSON storage
+cd backend && .venv/bin/python scripts/seed_demo.py --password 'choose-a-password'
+
+# Firestore used by Cloud Run (needs Application Default Credentials, e.g. from Cloud Shell)
+cd backend && FIRESTORE_ENABLED=true GOOGLE_CLOUD_PROJECT=YOUR_PROJECT_ID \
+  python scripts/seed_demo.py --password 'choose-a-password'
+```
+
 ## Migrating local data
 
-Back up `backend/data/store.json` and the destination database first. Use local Application Default Credentials with database-write access. Stop local writes and perform the import before starting Cloud Run: startup seeds starter topics into an empty database.
+Back up `backend/data/store.json` and the destination database first. Use local Application Default Credentials with database-write access. Stop local writes and perform the import before starting Cloud Run: startup adds the starter topics to the database.
 
 ```sh
 gcloud auth application-default login

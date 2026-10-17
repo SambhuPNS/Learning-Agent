@@ -1,13 +1,15 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react'
 import {
   ArrowLeft,
   ArrowRight,
   CheckCircle2,
   Ear,
+  FastForward,
   Lightbulb,
   LoaderCircle,
   MessageCircleQuestion,
   Mic,
+  Pause,
   RefreshCw,
   RotateCcw,
   Send,
@@ -17,8 +19,9 @@ import {
   VolumeX,
   XCircle,
 } from 'lucide-react'
-import { api } from '../api'
+import { api, ApiError } from '../api'
 import { FractionVisual } from '../components/FractionVisual'
+import { Genie, type GenieMood } from '../components/Genie'
 import { MasteryBar, StrategyBadge } from '../components/Insights'
 import { STRATEGY_LABEL } from '../labels'
 import type { Health, HistoryItem, Learner, LessonContent, LessonState, LessonSummary, TurnAction, TurnMeta, TurnResponse, TutorStep, Understanding, User } from '../types'
@@ -27,13 +30,26 @@ import { browserRecognitionAvailable, recognizeOnce, TutorVoice, UtteranceRecord
 type VoiceState = 'idle' | 'listening' | 'thinking'
 type InputMode = NonNullable<TurnMeta['inputMode']>
 
+/** Give up on understanding a spoken reply after this long; the student can tap or speak again. */
+const UNDERSTAND_TIMEOUT_MS = 12_000
+/** In hands-free mode, reopen the mic this many times per step when nothing usable was heard. */
+const HANDS_FREE_RETRIES = 2
+
 const KIND_LABEL: Record<TutorStep['kind'], string> = { teach: 'Learn', question: 'Your turn', feedback: 'Feedback', summary: 'Summary' }
 const STUDENT_LABEL: Partial<Record<TurnAction, string>> = {
-  continue: "I'm ready, let's continue.",
   hint: 'Can I have a hint?',
   explain_again: 'Can you explain that another way?',
 }
 const DIFFICULTY_LABEL = { foundation: 'Building foundations', core: 'On track', stretch: 'Ready for a challenge' }
+
+/** How long a finished step stays on screen before the tutor moves on by itself. */
+function pauseAfter(step: TutorStep, listened: boolean) {
+  const words = step.paragraphs.join(' ').split(/\s+/).filter(Boolean).length
+  const visuals = step.content?.length ? step.content.filter((block) => block.type === 'visual').length : step.visual ? 1 : 0
+  // After hearing the step a short beat is enough; otherwise leave time to read it.
+  const ms = (listened ? 1500 : words * 350) + visuals * 2500
+  return Math.min(25_000, Math.max(listened ? 2500 : 5000, ms))
+}
 
 function ContentBlock({ block }: { block: LessonContent }) {
   if (block.type === 'text') return <p>{block.text}</p>
@@ -59,6 +75,9 @@ function StepCard({ step, active, speaking, onReplay }: { step: TutorStep; activ
           {speaking ? <span className="sound-bars" aria-hidden="true"><i /><i /><i /></span> : <Volume2 size={17} />}
         </button>
       </header>
+      {step.why && (
+        <p className="step-why"><Sparkles size={14} aria-hidden="true" /> <span><strong>Why this step:</strong> {step.why}</span></p>
+      )}
       {step.feedback && (
         <div className={`feedback-banner ${step.feedback.correct ? 'correct' : 'incorrect'}`}>
           {step.feedback.correct ? <CheckCircle2 size={18} /> : <XCircle size={18} />}
@@ -109,7 +128,12 @@ export function LessonScreen({
   const [heard, setHeard] = useState<Understanding | null>(null)
   const [readAloud, setReadAloud] = useState(user.profile?.voiceEnabled ?? true)
   const [handsFree, setHandsFree] = useState(false)
+  const [autoContinue, setAutoContinue] = useState(true)
+  const [autoNext, setAutoNext] = useState<{ id: number; ms: number } | null>(null)
   const [speakingId, setSpeakingId] = useState<string | null>(null)
+  const [showGenie, setShowGenie] = useState(() => localStorage.getItem('elevate.genie') !== 'off')
+  const [cheer, setCheer] = useState<'happy' | 'encourage' | null>(null)
+  const [genieAnchor, setGenieAnchor] = useState<HTMLElement | null>(null)
 
   const [voice] = useState(
     () =>
@@ -119,14 +143,25 @@ export function LessonScreen({
   )
   const recorderRef = useRef<UtteranceRecorder | null>(null)
   const stopRecognitionRef = useRef<(() => void) | null>(null)
+  const understandAbortRef = useRef<AbortController | null>(null)
+  // Bumped whenever a voice attempt starts or is abandoned, so a stale recording is never acted on.
+  const voiceAttemptRef = useRef(0)
+  const handsFreeRetriesRef = useRef(0)
   const listeningRef = useRef(false)
   const busyRef = useRef(false)
   const stateRef = useRef<LessonState | null>(null)
   const readAloudRef = useRef(readAloud)
   const handsFreeRef = useRef(handsFree)
+  const autoContinueRef = useRef(autoContinue)
+  const autoTimerRef = useRef<number | null>(null)
+  const draftRef = useRef('')
   const startedRef = useRef(false)
+  // False once the student leaves the lesson; replies that arrive later must not speak, continue or listen.
+  const aliveRef = useRef(true)
   const readyAtRef = useRef(performance.now())
   const feedEndRef = useRef<HTMLDivElement>(null)
+  const mainRef = useRef<HTMLElement>(null)
+  const cheerTimerRef = useRef<number | null>(null)
 
   const geminiVoice = Boolean(health?.gemini)
   const canListen = geminiVoice || browserRecognitionAvailable()
@@ -136,29 +171,102 @@ export function LessonScreen({
   useEffect(() => {
     readAloudRef.current = readAloud
     handsFreeRef.current = handsFree
-  }, [readAloud, handsFree])
+    autoContinueRef.current = autoContinue
+  }, [readAloud, handsFree, autoContinue])
 
   useEffect(() => {
     feedEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
   }, [history.length, pendingStudent, busy])
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    aliveRef.current = true
+    return () => {
+      aliveRef.current = false
       voice.stop()
+      understandAbortRef.current?.abort()
       recorderRef.current?.cancel()
       stopRecognitionRef.current?.()
-    },
-    [voice],
-  )
+      if (autoTimerRef.current !== null) window.clearTimeout(autoTimerRef.current)
+      if (cheerTimerRef.current !== null) window.clearTimeout(cheerTimerRef.current)
+    }
+  }, [voice])
 
+  // The genie flies to the newest step, or to the "thinking" card while Gemini works.
+  useLayoutEffect(() => {
+    const feed = mainRef.current
+    if (!feed) return
+    const target = busy ? feed.querySelector('.thinking-card') : [...feed.querySelectorAll('.step-card')].at(-1)
+    setGenieAnchor((target as HTMLElement | null | undefined) ?? null)
+  }, [history.length, busy])
+
+  /** Resolves false if the student stopped the tutor mid-sentence or left the lesson. */
   const speakStep = async (step: TutorStep, force = false) => {
-    if (!force && !readAloudRef.current) return
+    if (!aliveRef.current) return false
+    if (!force && !readAloudRef.current) return true
+    // speak() first stops any earlier line, which clears the speaking marker, so mark this step afterwards.
+    const spoken = voice.speak(step.speechParts?.length ? step.speechParts : step.speech, geminiVoice)
     setSpeakingId(step.id)
-    await voice.speak(step.speech, geminiVoice)
+    return spoken
+  }
+
+  const cancelAutoNext = () => {
+    if (autoTimerRef.current !== null) window.clearTimeout(autoTimerRef.current)
+    autoTimerRef.current = null
+    setAutoNext(null)
+  }
+
+  const scheduleAutoNext = (ms: number) => {
+    cancelAutoNext()
+    if (!aliveRef.current) return
+    setAutoNext({ id: Date.now(), ms })
+    autoTimerRef.current = window.setTimeout(() => {
+      autoTimerRef.current = null
+      if (!aliveRef.current) return
+      setAutoNext(null)
+      void runTurn('continue')
+    }, ms)
+  }
+
+  /** Abandons a recording or speech understanding in progress, e.g. when the student taps an answer instead. */
+  const interruptVoice = () => {
+    voiceAttemptRef.current++
+    understandAbortRef.current?.abort()
+    understandAbortRef.current = null
+    recorderRef.current?.cancel()
+    recorderRef.current = null
+    stopRecognitionRef.current?.()
+    stopRecognitionRef.current = null
+    listeningRef.current = false
+    setVoiceState('idle')
+    setLevel(0)
+  }
+
+  const updateDraft = (value: string) => {
+    setDraft(value)
+    draftRef.current = value
+    if (value) {
+      cancelAutoNext()
+      if (listeningRef.current || understandAbortRef.current) interruptVoice()
+    }
+  }
+
+  /** In hands-free mode the mic reopens by itself a couple of times; otherwise the student taps it. */
+  const retryListening = (message: string) => {
+    if (!handsFreeRef.current || handsFreeRetriesRef.current >= HANDS_FREE_RETRIES) {
+      setNotice(`${message} Tap the mic and try again.`)
+      return
+    }
+    handsFreeRetriesRef.current++
+    setNotice(`${message} Listening again…`)
+    window.setTimeout(() => {
+      if (aliveRef.current && !busyRef.current && !listeningRef.current) void listen()
+    }, 700)
   }
 
   const runTurn = async (action: TurnAction, text?: string, inputMode?: InputMode, responseMs?: number) => {
-    if (busyRef.current) return
+    if (busyRef.current || !aliveRef.current) return
+    if (inputMode !== 'voice') interruptVoice()
+    cancelAutoNext()
     busyRef.current = true
     voice.stop()
     setBusy(true)
@@ -181,21 +289,40 @@ export function LessonScreen({
       setBusy(false)
       setPendingStudent(null)
     }
+    if (!aliveRef.current) return
     stateRef.current = response.state
     readyAtRef.current = performance.now()
+    handsFreeRetriesRef.current = 0
     setHistory(response.history)
     setLessonState(response.state)
     setLearner(response.learner)
     setNotice(response.notice)
     setDraft('')
+    draftRef.current = ''
     setAskMode(false)
     const last = response.history.at(-1)
     if (last?.role !== 'tutor') return
-    await speakStep(last.step)
+    // While the student reads or listens, have the server prepare the likely next step and its audio.
+    if (geminiVoice && !response.state.awaitingAnswer && !response.state.complete) void api.prepare(lesson.id).catch(() => undefined)
+    const feedback = last.step.feedback
+    if (feedback || response.state.complete) {
+      setCheer(feedback && !feedback.correct ? 'encourage' : 'happy')
+      if (cheerTimerRef.current !== null) window.clearTimeout(cheerTimerRef.current)
+      cheerTimerRef.current = window.setTimeout(() => setCheer(null), 2600)
+    }
+    const finished = await speakStep(last.step)
+    if (!aliveRef.current) return
     // Thinking time starts once the tutor has finished speaking.
     if (stateRef.current === response.state) readyAtRef.current = performance.now()
     const stillCurrent = stateRef.current === response.state && !busyRef.current && !listeningRef.current
-    if (handsFreeRef.current && readAloudRef.current && !response.state.complete && stillCurrent) void listen()
+    if (!stillCurrent || response.state.complete) return
+    // Like a teacher: keep going until a question needs an answer, unless the student has stepped in.
+    const resumed = action === 'start' && response.history.length > 1
+    if (!response.state.awaitingAnswer && autoContinueRef.current && finished && !resumed && !draftRef.current) {
+      scheduleAutoNext(pauseAfter(last.step, readAloudRef.current))
+    } else if (handsFreeRef.current && readAloudRef.current) {
+      void listen()
+    }
   }
 
   const route = (understanding: Understanding, responseMs: number) => {
@@ -203,19 +330,19 @@ export function LessonScreen({
       case 'answer':
         return runTurn('answer', understanding.answer, 'voice', responseMs)
       case 'hint':
-        return runTurn('hint', undefined, 'voice', responseMs)
+        return runTurn('hint', understanding.transcript, 'voice', responseMs)
       case 'explain_again':
-        return runTurn('explain_again', undefined, 'voice', responseMs)
+        return runTurn('explain_again', understanding.transcript, 'voice', responseMs)
       case 'continue':
         if (stateRef.current?.awaitingAnswer) {
-          setNotice("Have a go at the question first. You can also say 'give me a hint'.")
+          retryListening("Have a go at the question first. You can also say 'give me a hint'.")
           return
         }
-        return runTurn('continue', undefined, 'voice', responseMs)
+        return runTurn('continue', understanding.transcript, 'voice', responseMs)
       case 'ask':
         return runTurn('ask', understanding.question, 'voice', responseMs)
       default:
-        setNotice("Sorry, I didn't catch that. Tap the mic and try again.")
+        retryListening("Sorry, I didn't catch that.")
     }
   }
 
@@ -225,8 +352,11 @@ export function LessonScreen({
       stopRecognitionRef.current?.()
       return
     }
-    if (busyRef.current || !canListen) return
+    if (busyRef.current || !canListen || !aliveRef.current) return
+    cancelAutoNext()
     voice.stop()
+    const attempt = ++voiceAttemptRef.current
+    const current = () => aliveRef.current && attempt === voiceAttemptRef.current
     listeningRef.current = true
     const listenStartedAt = performance.now()
     const waitedMs = listenStartedAt - readyAtRef.current
@@ -241,43 +371,59 @@ export function LessonScreen({
         const recorder = new UtteranceRecorder()
         recorderRef.current = recorder
         const recording = await recorder.start(setLevel)
+        if (!current()) return
         recorderRef.current = null
         listeningRef.current = false
         if (!recording) {
           setVoiceState('idle')
-          setNotice("I didn't hear anything. Tap the mic and try again.")
+          retryListening("I didn't hear anything.")
           return
         }
         responseMs = waitedMs + recording.speechStartMs
         setVoiceState('thinking')
-        understanding = await api.understand(lesson.id, recording.wavBase64)
+        const controller = new AbortController()
+        understandAbortRef.current = controller
+        const timer = window.setTimeout(() => controller.abort(), UNDERSTAND_TIMEOUT_MS)
+        try {
+          understanding = await api.understand(lesson.id, recording.wavBase64, controller.signal)
+        } finally {
+          window.clearTimeout(timer)
+          if (understandAbortRef.current === controller) understandAbortRef.current = null
+        }
       } else {
         const recognition = recognizeOnce()
         stopRecognitionRef.current = recognition.stop
         const transcript = await recognition.result
+        if (!current()) return
         stopRecognitionRef.current = null
         listeningRef.current = false
         if (!transcript.trim()) {
           setVoiceState('idle')
-          setNotice("I didn't hear anything. Tap the mic and try again.")
+          retryListening("I didn't hear anything.")
           return
         }
         responseMs = performance.now() - readyAtRef.current
         setVoiceState('thinking')
         understanding = await api.interpret(lesson.id, transcript)
       }
+      if (!current()) return
       setVoiceState('idle')
       setHeard(understanding)
       await route(understanding, responseMs)
     } catch (err) {
+      if (!current()) return
       listeningRef.current = false
       recorderRef.current = null
       setVoiceState('idle')
+      if ((err instanceof ApiError && err.status === 408) || (err as Error).name === 'AbortError') {
+        retryListening('That took too long to understand.')
+        return
+      }
       onAuthError(err)
       const message = (err as Error).message
       setError(/permission|NotAllowed/i.test(message) ? 'Microphone access was blocked. Allow it in the browser address bar and try again.' : message)
     } finally {
-      setLevel(0)
+      if (attempt === voiceAttemptRef.current) setLevel(0)
     }
   }
 
@@ -301,7 +447,28 @@ export function LessonScreen({
     setReadAloud(!readAloud)
   }
 
-  const disabled = busy || voiceState !== 'idle'
+  const toggleAutoContinue = () => {
+    if (autoContinue) cancelAutoNext()
+    setAutoContinue(!autoContinue)
+  }
+
+  // Voice input never locks the dock: tapping or typing an answer simply replaces the voice attempt.
+  const disabled = busy
+  const genieMood: GenieMood = busy || voiceState === 'thinking' ? 'thinking'
+    : voiceState === 'listening' ? 'listening'
+    : cheer ?? (speakingId ? 'talking' : 'idle')
+  const genieBubble = {
+    thinking: voiceState === 'thinking' ? 'Let me understand…' : 'Hmm, let me think…',
+    listening: "I'm listening…",
+    happy: lessonState?.complete ? 'You did it!' : 'Brilliant!',
+    encourage: 'So close! Try again.',
+    talking: null,
+    idle: question ? 'Your turn!' : null,
+  }[genieMood]
+  const toggleGenie = () => {
+    localStorage.setItem('elevate.genie', showGenie ? 'off' : 'on')
+    setShowGenie(!showGenie)
+  }
   const progressPercent = lessonState ? Math.min(100, Math.round((lessonState.correct / lessonState.target) * 100)) : 0
 
   return (
@@ -319,8 +486,9 @@ export function LessonScreen({
         <button type="button" className="ghost-button" onClick={() => runTurn('restart')} disabled={busy}><RotateCcw size={15} /> Restart</button>
       </header>
 
-      <div className="lesson-layout">
-        <main className="lesson-main">
+      <div className={`lesson-layout ${showGenie ? 'with-genie' : ''}`}>
+        {showGenie && <Genie mood={genieMood} bubble={genieBubble} anchor={genieAnchor} lane={mainRef} voice={voice} micLevel={level} />}
+        <main className="lesson-main" ref={mainRef}>
           <div className="feed" aria-live="polite">
             {history.map((item, index) =>
               item.role === 'student' ? (
@@ -331,7 +499,11 @@ export function LessonScreen({
                   step={item.step}
                   active={item.step.id === lastTutor?.id}
                   speaking={speakingId === item.step.id}
-                  onReplay={() => (speakingId === item.step.id ? voice.stop() : void speakStep(item.step, true))}
+                  onReplay={() => {
+                    cancelAutoNext()
+                    if (speakingId === item.step.id) voice.stop()
+                    else void speakStep(item.step, true)
+                  }}
                 />
               ),
             )}
@@ -346,6 +518,14 @@ export function LessonScreen({
             {(error || notice) && <p className={error ? 'dock-alert error' : 'dock-alert'} role="status">{error ?? notice}</p>}
             {heard && voiceState === 'idle' && (
               <p className="heard"><Ear size={15} /> Heard: “{heard.transcript}”{heard.intent === 'answer' && heard.answer ? <> → <strong>{heard.answer}</strong></> : null}</p>
+            )}
+            {autoNext && (
+              <div className="auto-next" role="status">
+                <FastForward size={15} />
+                <span>Moving on in a moment</span>
+                <div className="auto-next-track" aria-hidden="true"><i key={autoNext.id} style={{ animationDuration: `${autoNext.ms}ms` }} /></div>
+                <button type="button" className="ghost-button small" onClick={cancelAutoNext}><Pause size={13} /> Pause</button>
+              </div>
             )}
 
             {lessonState?.complete ? (
@@ -383,7 +563,7 @@ export function LessonScreen({
                     <form className="answer-form" onSubmit={submitDraft}>
                       <input
                         value={draft}
-                        onChange={(e) => setDraft(e.target.value)}
+                        onChange={(e) => updateDraft(e.target.value)}
                         placeholder={askMode ? 'Ask your tutor a question…' : 'Type your answer, e.g. 3/8'}
                         aria-label={askMode ? 'Your question' : 'Your answer'}
                         disabled={disabled}
@@ -397,7 +577,7 @@ export function LessonScreen({
                     <p className="dock-hint">{voiceState === 'listening' ? 'Listening… say your answer' : 'Pick an answer above, or tap the mic and say it.'}</p>
                   ) : (
                     <form className="answer-form" onSubmit={submitDraft}>
-                      <input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Ask a question, or press Continue" aria-label="Your question" disabled={disabled} maxLength={500} />
+                      <input value={draft} onChange={(e) => updateDraft(e.target.value)} placeholder="Ask a question, or press Continue" aria-label="Your question" disabled={disabled} maxLength={500} />
                       {draft.trim() ? (
                         <button className="ghost-button" type="submit" disabled={disabled}>Ask <Send size={15} /></button>
                       ) : (
@@ -423,7 +603,7 @@ export function LessonScreen({
                   )}
                   <button type="button" className="chip-button blue" onClick={() => runTurn('explain_again', undefined, 'choice')} disabled={disabled || !lessonState}><RefreshCw size={15} /> Explain another way</button>
                   {question && (
-                    <button type="button" className="chip-button" onClick={() => setAskMode(!askMode)} disabled={disabled}>
+                    <button type="button" className="chip-button" onClick={() => { interruptVoice(); setAskMode(!askMode) }} disabled={disabled}>
                       <MessageCircleQuestion size={15} /> {askMode ? 'Back to answering' : 'Ask a question'}
                     </button>
                   )}
@@ -451,7 +631,7 @@ export function LessonScreen({
           </section>
 
           <section className="rail-card">
-            <h3>Voice</h3>
+            <h3>Voice &amp; pace</h3>
             <label className="switch-row">
               <span>{readAloud ? <Volume2 size={16} /> : <VolumeX size={16} />} Read aloud</span>
               <input type="checkbox" role="switch" checked={readAloud} onChange={toggleReadAloud} />
@@ -460,8 +640,17 @@ export function LessonScreen({
               <span><Mic size={16} /> Hands-free conversation</span>
               <input type="checkbox" role="switch" checked={handsFree} onChange={() => setHandsFree(!handsFree)} disabled={!canListen || !readAloud} />
             </label>
+            <label className="switch-row">
+              <span><FastForward size={16} /> Keep teaching automatically</span>
+              <input type="checkbox" role="switch" checked={autoContinue} onChange={toggleAutoContinue} />
+            </label>
+            <label className="switch-row">
+              <span><Sparkles size={16} /> Show the genie</span>
+              <input type="checkbox" role="switch" checked={showGenie} onChange={toggleGenie} />
+            </label>
             <p className="rail-note">
-              {handsFree ? 'After the tutor speaks, the mic opens automatically. Just answer out loud.' : 'Tap the mic to answer, ask for a hint, or ask a question out loud.'}
+              {autoContinue && 'Your tutor keeps teaching and waits when it asks you something. Type or tap the mic any time to jump in. '}
+              {handsFree ? "The mic opens by itself when it's your turn, so just answer out loud." : 'Tap the mic to answer, ask for a hint, or ask a question out loud.'}
             </p>
             {speakingId && (
               <button type="button" className="ghost-button small" onClick={() => voice.stop()}><Square size={13} /> Stop speaking</button>

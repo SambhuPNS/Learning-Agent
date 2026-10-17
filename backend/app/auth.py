@@ -48,13 +48,7 @@ def _check_invite(role: str, invite_code: str) -> None:
         raise HTTPException(403, "The teacher invite code is not correct.")
 
 
-def _require_password_accounts() -> None:
-    if GOOGLE_CLIENT_ID:
-        raise HTTPException(403, "This app uses Google sign-in. Please continue with Google.")
-
-
 def signup(name: str, email: str, password: str, role: str = "student", invite_code: str = "") -> tuple[str, dict]:
-    _require_password_accounts()
     email = email.strip().lower()
     _check_invite(role, invite_code)
     salt = secrets.token_bytes(16)
@@ -76,7 +70,6 @@ def signup(name: str, email: str, password: str, role: str = "student", invite_c
 
 
 def login(email: str, password: str) -> tuple[str, dict]:
-    _require_password_accounts()
     email = email.strip().lower()
     user = _find_user_by_email(email)
     if not user or "passwordHash" not in user:
@@ -130,6 +123,9 @@ def google_sign_in(credential: str, role: str = "student", invite_code: str = ""
     # Accounts created before Google sign-in have no googleId and are matched by verified email.
     if user.get("googleId", claims["sub"]) != claims["sub"]:
         raise HTTPException(401, "This email is linked to a different Google account.")
+    if "googleId" not in user:
+        # Anyone could have registered this email with a password, so the verified owner's sign-in removes it.
+        store.link_google_account(user["id"], claims["sub"])
     store.save_token(_hash_token(token), user["id"])
     return token, user
 

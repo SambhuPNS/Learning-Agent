@@ -23,7 +23,7 @@ const PACES: { value: Profile['pace']; title: string }[] = [
 const INTERESTS = ['Football', 'Cricket', 'Music', 'Gaming', 'Cooking', 'Space', 'Animals', 'Art', 'Dance', 'Movies']
 const STEPS = ['About you', 'Confidence', 'Learning style', 'Interests']
 
-export function OnboardingScreen({ user, onDone }: { user: User; onDone: (user: User) => void }) {
+export function OnboardingScreen({ user, onDone, onCancel }: { user: User; onDone: (user: User) => void; onCancel?: () => void }) {
   const [step, setStep] = useState(0)
   const [profile, setProfile] = useState<Profile>(
     user.profile ?? { grade: 7, mathConfidence: 3, fractionsComfort: 'some', learningStyle: 'visual', pace: 'steady', interests: [], voiceEnabled: true },
@@ -52,6 +52,11 @@ export function OnboardingScreen({ user, onDone }: { user: User; onDone: (user: 
 
   return (
     <div className="onboarding-page">
+      {onCancel && (
+        <button type="button" className="ghost-button onboarding-back" onClick={onCancel} disabled={busy}>
+          <ArrowLeft size={16} /> Lessons
+        </button>
+      )}
       <div className="onboarding-card">
         <ol className="stepper" aria-label="Profile steps">
           {STEPS.map((label, index) => (
@@ -64,7 +69,7 @@ export function OnboardingScreen({ user, onDone }: { user: User; onDone: (user: 
 
         {step === 0 && (
           <section>
-            <h1>Hi {user.name.split(' ')[0]}, let's set up your tutor.</h1>
+            <h1>{onCancel ? 'Update your learning profile' : `Hi ${user.name.split(' ')[0]}, let's set up your tutor.`}</h1>
             <p className="lead">Your answers shape every lesson. You can change them later.</p>
             <h2>Which grade are you in?</h2>
             <div className="choice-row">
@@ -147,16 +152,22 @@ export function OnboardingScreen({ user, onDone }: { user: User; onDone: (user: 
 
         {error && <p className="form-error" role="alert">{error}</p>}
         <div className="onboarding-actions">
-          <button type="button" className="ghost-button" onClick={() => setStep(step - 1)} disabled={step === 0 || busy}>
-            <ArrowLeft size={16} /> Back
-          </button>
+          {step === 0 && onCancel ? (
+            <button type="button" className="ghost-button" onClick={onCancel} disabled={busy}>
+              <ArrowLeft size={16} /> Cancel
+            </button>
+          ) : (
+            <button type="button" className="ghost-button" onClick={() => setStep(step - 1)} disabled={step === 0 || busy}>
+              <ArrowLeft size={16} /> Back
+            </button>
+          )}
           {step < STEPS.length - 1 ? (
             <button type="button" className="primary-button" onClick={() => setStep(step + 1)}>
               Next <ArrowRight size={16} />
             </button>
           ) : (
             <button type="button" className="primary-button" onClick={finish} disabled={busy}>
-              {busy && <LoaderCircle className="spin" size={16} />} Start learning
+              {busy && <LoaderCircle className="spin" size={16} />} {onCancel ? 'Save changes' : 'Start learning'}
             </button>
           )}
         </div>

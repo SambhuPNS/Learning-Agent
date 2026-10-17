@@ -72,6 +72,15 @@ def test_scripted_lesson_blocks_are_all_drawable():
     assert {"text", "callout", "table", "bar-chart", "line-graph", "flow"} <= types
 
 
+def test_block_schema_has_no_nested_limits():
+    # Vertex AI answered every lesson turn with 400 INVALID_ARGUMENT when block fields carried these limits.
+    def keywords(node):
+        if isinstance(node, dict):
+            return set(node) | set().union(*map(keywords, node.values()))
+        return set().union(*map(keywords, node)) if isinstance(node, list) else set()
+    assert not keywords(blocks.BLOCK_SCHEMA) & {"minItems", "maxItems", "minimum", "maximum"}
+
+
 def test_bkt_and_strategy_policy():
     model = student_model._new_model()
     before = student_model.concept(model, "x", 0.3)["mastery"]
@@ -152,8 +161,8 @@ def test_teacher_topics_and_insights():
                      "misconceptions": ["Plants get their food from the soil.", "Plants take in oxygen to make food."]}],
     }).json()
     lesson_id = topic["lessons"][0]["id"]
-    titles = [t["title"] for s in client.get("/api/curriculum", headers=student).json()["subjects"] for t in s["topics"]]
-    assert "Photosynthesis" in titles
+    topic_ids = [t["id"] for s in client.get("/api/curriculum", headers=student).json()["subjects"] for t in s["topics"]]
+    assert topic["id"] in topic_ids
 
     step = turn(student, lesson_id, "start")["history"][-1]["step"]
     assert step["kind"] == "teach"
@@ -173,8 +182,8 @@ def test_teacher_topics_and_insights():
 
     updated = {**{k: topic[k] for k in ("subject", "title", "gradeLevel", "description", "lessons")}, "published": False}
     assert client.put(f"/api/teacher/topics/{topic['id']}", headers=teacher, json=updated).status_code == 200
-    titles = [t["title"] for s in client.get("/api/curriculum", headers=student).json()["subjects"] for t in s["topics"]]
-    assert "Photosynthesis" not in titles
+    topic_ids = [t["id"] for s in client.get("/api/curriculum", headers=student).json()["subjects"] for t in s["topics"]]
+    assert topic["id"] not in topic_ids
     other = signup("other-teacher@example.com", role="teacher")
     assert client.delete(f"/api/teacher/topics/{topic['id']}", headers=other).status_code == 403
     assert client.delete(f"/api/teacher/topics/{topic['id']}", headers=teacher).status_code == 200
@@ -188,3 +197,13 @@ def test_teacher_invite_code():
         assert client.post("/api/auth/signup", json={**body, "inviteCode": "school-42"}).status_code == 200
     finally:
         auth.TEACHER_INVITE_CODE = ""
+
+
+def test_chat_shows_only_what_the_student_said():
+    headers = signup("cara@example.com")
+    client.put("/api/profile", headers=headers, json=PROFILE)
+    turn(headers, "fraction-basics", "start")
+    history = turn(headers, "fraction-basics", "continue")["history"]
+    assert [item["role"] for item in history] == ["tutor", "tutor"]
+    history = turn(headers, "fraction-basics", "continue", "Yeah, thanks.", meta={"inputMode": "voice"})["history"]
+    assert history[-2] == {"role": "student", "action": "continue", "text": "Yeah, thanks."}

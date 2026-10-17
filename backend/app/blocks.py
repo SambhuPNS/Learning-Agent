@@ -12,43 +12,44 @@ MAX_VISUALS = 4
 FRACTION_SCHEMA = {
     "type": "object",
     "properties": {
-        "numerator": {"type": "integer", "minimum": 0, "maximum": 24},
-        "denominator": {"type": "integer", "minimum": 1, "maximum": 12},
+        "numerator": {"type": "integer", "description": "0 to 24."},
+        "denominator": {"type": "integer", "description": "1 to 12."},
         "label": {"type": "string"},
     },
     "required": ["numerator", "denominator", "label"],
 }
 
-# One flat object for every block type keeps the schema within constructs Vertex AI already accepts here.
+# Vertex AI rejects the step schema when blocks carry nested size limits, so limits are
+# described here and enforced by clean_visual().
 BLOCK_SCHEMA = {
     "type": "object",
     "properties": {
         "type": {"type": "string", "enum": BLOCK_TYPES},
         "text": {"type": "string", "description": "text: one short paragraph. callout: the one sentence to highlight."},
         "caption": {"type": "string", "description": "callout: a 1-3 word label such as Remember, Tip or Example. Every other non-text block: a short title."},
-        "fractions": {"type": "array", "items": FRACTION_SCHEMA, "maxItems": 4,
-                      "description": "fraction-circles, fraction-bars and number-line: the fractions to draw."},
+        "fractions": {"type": "array", "items": FRACTION_SCHEMA,
+                      "description": "fraction-circles, fraction-bars and number-line: up to 4 fractions to draw."},
         "items": {
-            "type": "array", "maxItems": 6, "description": "flow: the steps in order. comparison: 2-3 ideas side by side.",
+            "type": "array", "description": "flow: up to 6 steps in order. comparison: 2-3 ideas side by side.",
             "items": {"type": "object", "properties": {"label": {"type": "string"}, "detail": {"type": "string"}},
                       "required": ["label", "detail"]},
         },
         "data": {
-            "type": "array", "maxItems": 8, "description": "bar-chart: one bar per category.",
+            "type": "array", "description": "bar-chart: up to 8 bars, one per category.",
             "items": {"type": "object", "properties": {"label": {"type": "string"}, "value": {"type": "number"}},
                       "required": ["label", "value"]},
         },
         "points": {
-            "type": "array", "maxItems": 12, "description": "line-graph: the points to join, in order of x.",
+            "type": "array", "description": "line-graph: up to 12 points to join, in order of x.",
             "items": {"type": "object", "properties": {"x": {"type": "number"}, "y": {"type": "number"}},
                       "required": ["x", "y"]},
         },
         "xLabel": {"type": "string", "description": "line-graph: what the x-axis measures, with units."},
         "yLabel": {"type": "string", "description": "bar-chart and line-graph: what the values measure, with units."},
-        "columns": {"type": "array", "items": {"type": "string"}, "maxItems": 4, "description": "table: the column headings."},
+        "columns": {"type": "array", "items": {"type": "string"}, "description": "table: up to 4 column headings."},
         "rows": {
-            "type": "array", "maxItems": 8, "description": "table: one list of cells per row, in column order.",
-            "items": {"type": "array", "items": {"type": "string"}, "maxItems": 4},
+            "type": "array", "description": "table: up to 8 rows, each a list of cells in column order.",
+            "items": {"type": "array", "items": {"type": "string"}},
         },
     },
     "required": ["type"],

@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import re
 from collections import defaultdict
@@ -10,12 +11,13 @@ from pydantic import BaseModel, Field, field_validator
 
 from . import auth, gemini, speech, student_model, topics, tutor
 from .config import GEMINI_MODEL, GEMINI_TTS_MODEL, GOOGLE_CLIENT_ID, TEACHER_INVITE_CODE, gemini_enabled
+from .curriculum import STARTER_ORDER
 from .store import store
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("tutor.api")
 
-app = FastAPI(title="Brightpath Tutor API")
+app = FastAPI(title="Elevate Tutor API")
 
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 MAX_AUDIO_BASE64 = 8_000_000
@@ -79,6 +81,10 @@ class UnderstandIn(BaseModel):
     lessonId: str = Field(max_length=80)
     audio: str = Field(max_length=MAX_AUDIO_BASE64)
     mimeType: Literal["audio/wav"] = "audio/wav"
+
+
+class PrepareIn(BaseModel):
+    lessonId: str = Field(max_length=80)
 
 
 class InterpretIn(BaseModel):
@@ -174,7 +180,8 @@ def save_profile(body: ProfileIn, user: dict = Depends(auth.current_student)) ->
 def curriculum(user: dict = Depends(auth.current_user)) -> dict:
     progress = user.get("progress", {})
     subjects: dict[str, list[dict]] = defaultdict(list)
-    for topic in sorted(topics.published_topics(), key=lambda t: (t["subject"], t.get("gradeLevel", 0), t["title"])):
+    for topic in sorted(topics.published_topics(),
+                        key=lambda t: (STARTER_ORDER.get(t["id"], len(STARTER_ORDER)), t["subject"], t.get("gradeLevel", 0), t["title"])):
         lessons = [
             {"id": lesson["id"], "title": lesson["title"], "summary": lesson.get("summary", ""), "order": index + 1,
              "topicId": topic["id"], "topicTitle": topic["title"],
@@ -198,6 +205,19 @@ async def tutor_turn(body: TurnIn, user: dict = Depends(auth.current_student)) -
     return await tutor.take_turn(user, body.lessonId, body.action, body.text, meta)
 
 
+@app.post("/api/tutor/prepare")
+async def tutor_prepare(body: PrepareIn, user: dict = Depends(auth.current_student)) -> dict:
+    """Called while the student reads a step: makes the next step and its audio so Continue is instant."""
+    step = await tutor.prepare_continue(user, body.lessonId)
+    if step is None:
+        return {"prepared": False}
+    try:
+        await asyncio.gather(*(speech.cached_audio(part) for part in speech.speech_parts(step["speech"])))
+    except gemini.GeminiError as exc:
+        log.info("Could not prepare audio for the next step: %s", exc)
+    return {"prepared": True}
+
+
 @app.post("/api/speech/understand")
 async def understand(body: UnderstandIn, user: dict = Depends(auth.current_student)) -> dict:
     if not gemini_enabled():
@@ -219,14 +239,11 @@ def interpret(body: InterpretIn, user: dict = Depends(auth.current_student)) -> 
 async def synthesize(body: SpeakIn, user: dict = Depends(auth.current_user)) -> Response:
     if not gemini_enabled():
         raise HTTPException(503, "Vertex AI text-to-speech is not configured.")
-    audio = speech.audio_cache.get(body.text)
-    if audio is None:
-        try:
-            audio = await gemini.synthesize(body.text)
-        except gemini.GeminiError as exc:
-            log.warning("Speech synthesis failed: %s", exc)
-            raise HTTPException(502, "Speech synthesis failed.") from exc
-        speech.audio_cache.put(body.text, audio)
+    try:
+        audio = await speech.cached_audio(body.text)
+    except gemini.GeminiError as exc:
+        log.warning("Speech synthesis failed: %s", exc)
+        raise HTTPException(502, "Speech synthesis failed.") from exc
     return Response(content=audio, media_type="audio/wav", headers={"Cache-Control": "no-store"})
 
 

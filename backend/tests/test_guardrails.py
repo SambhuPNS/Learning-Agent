@@ -27,7 +27,7 @@ class FakeGemini:
         self.verdicts: list = []
         self.prompts: list[str] = []
 
-    async def __call__(self, system, parts, schema, timeout=60, thinking="low"):
+    async def __call__(self, system, parts, schema, timeout=60, thinking="low", **_options):
         if schema is tutor.LEAK_CHECK_SCHEMA:
             verdict = self.verdicts.pop(0)
             if isinstance(verdict, Exception):
